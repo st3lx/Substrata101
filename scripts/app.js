@@ -33,10 +33,18 @@ document.addEventListener("DOMContentLoaded", () => {
   let auroraGL = null;
   let getBands = null;
   
-  // Style-specific state variables
+    // Style-specific state variables
   let particles = [];
   let lastTime = 0;
   let hueRotation = 0;
+
+  // Starry Night particle arrays - ADD THESE HERE
+  let bandParticles = [];
+  let waveParticles = [];
+  let newBlueBandParticles = [];
+  let swirlParticles = [];
+  let indigoWave1Particles = [];
+  let indigoWave2Particles = [];
 
   // ----- Recording state -----
   let mediaRecorder = null;
@@ -56,9 +64,12 @@ document.addEventListener("DOMContentLoaded", () => {
   function clearCanvas() {
     if (ctx2d) {
       ctx2d.fillStyle = "#000015";
+      ctx2d.setTransform(1, 0, 0, 1, 0, 0); // reset transform
+      ctx2d.clearRect(0, 0, canvas.width, canvas.height);
       ctx2d.fillRect(0, 0, canvas.width, canvas.height);
     }
   }
+
 
   function formatTime(seconds) {
     if (isNaN(seconds)) return "0:00";
@@ -132,945 +143,882 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // ----- Visualization styles -----
   
-  // 1. Florr (Flower) style
-  function renderFlorr() {
-    dprSizeCanvas();
-    clearCanvas();
-    
-    analyser.getByteFrequencyData(dataArray);
-    const cw = canvas.width;
-    const ch = canvas.height;
-    
-    // Create a flower-like visualization
-    const centerX = cw / 2;
-    const centerY = ch / 2;
-    const maxRadius = Math.min(cw, ch) * 0.4;
-    
-    ctx2d.lineWidth = 2;
-    
-    // Draw petals based on frequency data
-    const petalCount = 12;
-    for (let i = 0; i < petalCount; i++) {
-      const angle = (i * 2 * Math.PI) / petalCount;
-      const freqIndex = Math.floor(i * bufferLength / petalCount);
-      const v = dataArray[freqIndex] / 255;
-      
-      const petalLength = maxRadius * (0.5 + v * 0.5);
-      const petalWidth = maxRadius * 0.1 * (0.7 + v * 0.3);
-      
-      const x1 = centerX + Math.cos(angle) * (maxRadius * 0.2);
-      const y1 = centerY + Math.sin(angle) * (maxRadius * 0.2);
-      const x2 = centerX + Math.cos(angle) * petalLength;
-      const y2 = centerY + Math.sin(angle) * petalLength;
-      
-      // Draw petal
-      ctx2d.beginPath();
-      ctx2d.moveTo(x1, y1);
-      ctx2d.quadraticCurveTo(
-        centerX + Math.cos(angle) * (petalLength * 0.5) + Math.cos(angle + Math.PI/2) * petalWidth,
-        centerY + Math.sin(angle) * (petalLength * 0.5) + Math.sin(angle + Math.PI/2) * petalWidth,
-        x2, y2
-      );
-      ctx2d.quadraticCurveTo(
-        centerX + Math.cos(angle) * (petalLength * 0.5) + Math.cos(angle - Math.PI/2) * petalWidth,
-        centerY + Math.sin(angle) * (petalLength * 0.5) + Math.sin(angle - Math.PI/2) * petalWidth,
-        x1, y1
-      );
-      
-      const hue = (i / petalCount) * 360;
-      ctx2d.fillStyle = `hsla(${hue}, 80%, 60%, ${0.6 + v * 0.4})`;
-      ctx2d.fill();
-      
-      // Draw center circle
-      ctx2d.beginPath();
-      ctx2d.arc(centerX, centerY, maxRadius * 0.15, 0, Math.PI * 2);
-      ctx2d.fillStyle = `hsla(60, 80%, 60%, ${0.8})`;
-      ctx2d.fill();
-    }
-  }
+ // Put this near your other render functions (replace previous renderFlorr placeholder)
 
-  // 2. Aurora style (WebGL)
-  // In your app.js, replace the renderAurora function with this:
-function renderAurora() {
-  // Create a WebGL canvas if it doesn't exist
-  let glCanvas = document.getElementById("webgl-canvas");
-  if (!glCanvas) {
-    glCanvas = document.createElement("canvas");
-    glCanvas.id = "webgl-canvas";
-    glCanvas.style.position = "absolute";
-    glCanvas.style.top = canvas.offsetTop + "px";
-    glCanvas.style.left = canvas.offsetLeft + "px";
-    glCanvas.style.zIndex = "1";
-    glCanvas.width = canvas.width;
-    glCanvas.height = canvas.height;
-    document.querySelector("main").appendChild(glCanvas);
+// ---------------------------
+// Audio analysis for Florr
+// ---------------------------
+
+  
+
+// Florr state and math functions
+const florrState = {
+  time: 0,
+  dimension: 4,
+  symmetry: 6,
+  complexity: 5,
+  animationSpeed: 0.9,
+  points: [],
+  colorPalettes: [
+    ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7'],
+    ['#6A0572', '#0dabefff', '#5C80BC', '#4D9DE0', '#0fe0fcff'],
+    ['#1A535C', '#4ECDC4', '#F7FFF7', '#3f67ecff', '#FFE66D'],
+    ['#fb2448ff', '#419D78', '#E0A458', '#FFDBB5', '#C04ABC']
+  ],
+  currentPalette: 0
+};
+
+function matMul(A, B) {
+  return [
+    [A[0][0]*B[0][0] + A[0][1]*B[1][0], A[0][0]*B[0][1] + A[0][1]*B[1][1]],
+    [A[1][0]*B[0][0] + A[1][1]*B[1][0], A[1][0]*B[0][1] + A[1][1]*B[1][1]],
+  ];
+}
+
+function factorial(n) { return n<=1 ? 1 : n*factorial(n-1); }
+
+function expm(A, t) {
+  const I = [[1,0],[0,1]];
+  let result = [[1,0],[0,1]];
+  let term = [[1,0],[0,1]];
+  for (let n=1; n<10; n++) {
+    term = matMul(A, term);
+    const scalar = Math.pow(t, n) / factorial(n);
+    result = [
+      [result[0][0] + scalar*term[0][0], result[0][1] + scalar*term[0][1]],
+      [result[1][0] + scalar*term[1][0], result[1][1] + scalar*term[1][1]],
+    ];
   }
-  
-  // Position and size the WebGL canvas to match the 2D canvas
-  const rect = canvas.getBoundingClientRect();
-  glCanvas.style.width = canvas.style.width;
-  glCanvas.style.height = canvas.style.height;
-  glCanvas.width = canvas.width;
-  glCanvas.height = canvas.height;
-  
-  // Initialize WebGL for Aurora if needed
-  if (!auroraGL && getBands) {
-    auroraGL = initAuroraGL(glCanvas, getBands, {});
+  return result;
+}
+
+function drawEllipse(M, r, color, alpha=0.44, scale=140, cx=0, cy=0, offsetAngle=0) {
+  ctx2d.strokeStyle = color;
+  ctx2d.globalAlpha = alpha;
+  ctx2d.lineWidth = 1.6;
+  ctx2d.beginPath();
+  for (let θ = 0; θ < 2*Math.PI; θ += 0.04) {
+    const x = r*Math.cos(θ);
+    const y = r*Math.sin(θ);
+    const X = M[0][0]*x + M[0][1]*y;
+    const Y = M[1][0]*x + M[1][1]*y;
+    const rotX = Math.cos(offsetAngle)*X - Math.sin(offsetAngle)*Y;
+    const rotY = Math.sin(offsetAngle)*X + Math.cos(offsetAngle)*Y;
+    ctx2d.lineTo(cx + scale*rotX, cy + scale*rotY);
   }
-  
-  // Render the Aurora
-  if (auroraGL) {
-    auroraGL();
-  }
-  
-  // Hide the WebGL canvas when switching to other styles
-  document.querySelectorAll(".styleBtn").forEach(btn => {
-    btn.addEventListener("click", (e) => {
-      const style = e.target.getAttribute("data-style");
-      if (style !== "aurora" && glCanvas) {
-        glCanvas.style.display = "none";
-      } else if (glCanvas) {
-        glCanvas.style.display = "block";
-      }
+  ctx2d.closePath();
+  ctx2d.stroke();
+  ctx2d.globalAlpha = 1.1;
+}
+
+function generatePoints(dim, count) {
+  const pts = [];
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2;
+    const radius = 0.25 + 0.6 * Math.random();
+    pts.push({
+      x: 3*radius * Math.cos(angle * dim),
+      y: 3*radius * Math.sin(angle * dim),
+      originalX: radius * Math.cos(angle * dim),
+      originalY: radius * Math.sin(angle * dim),
+      phase: Math.random() * Math.PI * 2,
+      energy: 0.3 + 0.9 * Math.random()
     });
+  }
+  return pts;
+}
+
+function applyFlow(points, time) {
+  return points.map(p => {
+    const flowX = Math.sin(p.originalX * 2 + time) * 0.15;
+    const flowY = Math.cos(p.originalY * 2 + time) * 0.15;
+    return {...p, x: p.originalX + flowX, y: p.originalY + flowY, phase: p.phase + time * 0.5};
   });
 }
 
-  // 3. Storm style
-  function renderStorm() {
-    dprSizeCanvas();
-    clearCanvas();
-    
+// Initialize points
+florrState.points = generatePoints(florrState.dimension, 75);
+
+function renderFlorr() {
+  dprSizeCanvas();
+  clearCanvas();
+  if (!ctx2d) return;
+
+  // Get audio data for responsiveness
+  let audioEnergy = 0;
+  let beatIntensity = 0;
+  if (analyser && dataArray) {
     analyser.getByteFrequencyData(dataArray);
-    const cw = canvas.width;
-    const ch = canvas.height;
-    
-    // Storm background
-    const gradient = ctx2d.createLinearGradient(0, 0, 0, ch);
-    gradient.addColorStop(0, "#0a0a2a");
-    gradient.addColorStop(1, "#1a1a40");
-    ctx2d.fillStyle = gradient;
-    ctx2d.fillRect(0, 0, cw, ch);
-    
-    // Lightning effect based on audio energy
-    const energy = dataArray.reduce((sum, val) => sum + val, 0) / (bufferLength * 255);
-    if (energy > 0.7 && Math.random() < 0.1) {
-      ctx2d.strokeStyle = "rgba(255, 255, 255, 0.7)";
-      ctx2d.lineWidth = 2 + Math.random() * 3;
-      ctx2d.beginPath();
-      const startX = Math.random() * cw;
-      ctx2d.moveTo(startX, 0);
-      
-      for (let y = 10; y < ch; y += 10 + Math.random() * 20) {
-        const xVar = 20 + Math.random() * 30;
-        ctx2d.lineTo(startX - xVar + Math.random() * xVar * 2, y);
-      }
-      ctx2d.stroke();
+    // Calculate RMS energy
+    let sum = 0;
+    for (let i = 0; i < dataArray.length; i++) {
+      sum += dataArray[i] / 255;
     }
+    audioEnergy = sum / dataArray.length;
     
-    // Rain drops
-    ctx2d.strokeStyle = "rgba(150, 150, 255, 0.6)";
-    for (let i = 0; i < 100; i++) {
-      const x = (i * 13) % cw;
-      const speed = 5 + (i % 5);
-      const y = ((Date.now() / 20) * speed) % ch;
-      ctx2d.beginPath();
-      ctx2d.moveTo(x, y);
-      ctx2d.lineTo(x - 1, y + 8);
-      ctx2d.stroke();
+    // Simple beat detection (low frequency emphasis)
+    let lowSum = 0;
+    const lowEnd = Math.floor(dataArray.length * 0.2);
+    for (let i = 0; i < lowEnd; i++) {
+      lowSum += dataArray[i] / 255;
     }
-    
-    // Storm intensity visualization
-    const stormIntensity = energy * 0.8;
-    for (let i = 0; i < 30; i++) {
-      const freqIndex = Math.floor(i * bufferLength / 30);
-      const v = dataArray[freqIndex] / 255;
-      
-      const x = Math.random() * cw;
-      const y = Math.random() * ch;
-      const radius = 1 + v * 10 * stormIntensity;
-      
-      ctx2d.beginPath();
-      ctx2d.arc(x, y, radius, 0, Math.PI * 2);
-      ctx2d.fillStyle = `rgba(100, 100, 255, ${0.2 + v * 0.5})`;
-      ctx2d.fill();
-    }
+    beatIntensity = lowSum / lowEnd;
   }
 
-  // 4. StarryNight style
-  function renderStarryNight() {
-    dprSizeCanvas();
-    clearCanvas();
-    
-    analyser.getByteFrequencyData(dataArray);
-    const cw = canvas.width;
-    const ch = canvas.height;
-    
-    // Dark blue background for space
-    ctx2d.fillStyle = "#000020";
-    ctx2d.fillRect(0, 0, cw, ch);
-    
-    // Create stars if needed
-    if (particles.length === 0 || particles.length < 200) {
-      particles = [];
-      for (let i = 0; i < 200; i++) {
-        particles.push({
-          x: Math.random() * cw,
-          y: Math.random() * ch,
-          size: Math.random() * 2 + 0.5,
-          speed: Math.random() * 0.5 + 0.1,
-          brightness: Math.random() * 0.5 + 0.5
-        });
-      }
-    }
-    
-    // Draw and update stars
-    const energy = dataArray.reduce((sum, val) => sum + val, 0) / (bufferLength * 255);
-    
-    particles.forEach(star => {
-      // Twinkle effect based on audio
-      const twinkle = 0.7 + Math.sin(Date.now() / 1000 + star.x * 0.1) * 0.3 * energy;
-      
-      ctx2d.beginPath();
-      ctx2d.arc(star.x, star.y, star.size * (0.8 + energy * 0.5), 0, Math.PI * 2);
-      ctx2d.fillStyle = `rgba(255, 255, 255, ${star.brightness * twinkle * 0.8})`;
-      ctx2d.fill();
-      
-      // Move stars slowly
-      star.y += star.speed * (1 + energy * 0.5);
-      if (star.y > ch) {
-        star.y = 0;
-        star.x = Math.random() * cw;
-      }
-    });
-    
-    // Shooting stars occasionally
-    if (Math.random() < 0.01 * energy) {
-      const startX = Math.random() * cw;
-      const length = 50 + Math.random() * 100;
-      
-      ctx2d.strokeStyle = "rgba(255, 255, 255, 0.8)";
-      ctx2d.lineWidth = 2;
-      ctx2d.beginPath();
-      ctx2d.moveTo(startX, 0);
-      ctx2d.lineTo(startX - length / 4, length);
-      ctx2d.stroke();
-    }
-    
-    // Add some larger "special" stars that pulse with the beat
-    for (let i = 0; i < 5; i++) {
-      const freqIndex = Math.floor(i * bufferLength / 5);
-      const v = dataArray[freqIndex] / 255;
-      
-      const x = (i + 1) * cw / 6;
-      const y = ch / 2;
-      const size = 3 + v * 10;
-      
+  const cw = canvas.width;
+  const ch = canvas.height;
+  const cx = cw / 2;
+  const cy = ch / 2;
+  
+  // Audio-responsive timing
+  florrState.time += 0.02 * florrState.animationSpeed * (1 + audioEnergy * 0.8);
+
+  const transformedPoints = applyFlow(florrState.points, florrState.time);
+
+  // Draw outer point-based mandala
+  const angleStep = (2 * Math.PI) / florrState.symmetry;
+  const palette = florrState.colorPalettes[florrState.currentPalette];
+  
+  for (let sector = 0; sector < florrState.symmetry; sector++) {
+    ctx2d.save();
+    ctx2d.translate(cx, cy);
+    ctx2d.rotate(sector * angleStep);
+
+    transformedPoints.forEach(p => {
+      const x = p.x * cw * 0.4 * (1 + beatIntensity * 0.6);
+      const y = p.y * ch * 0.4 * (1 + beatIntensity * 0.6);
+      const colorIndex = Math.floor((p.phase / (2 * Math.PI)) * palette.length) % palette.length;
+      const alpha = 0.14 + 0.4 * Math.sin(p.phase + florrState.time) + audioEnergy * 0.3;
+      ctx2d.fillStyle = palette[colorIndex];
+      ctx2d.globalAlpha = alpha * p.energy * (1 + audioEnergy * 0.5);
+      const size = 7 + florrState.complexity * (1 + beatIntensity* 0.8);
       ctx2d.beginPath();
       ctx2d.arc(x, y, size, 0, Math.PI * 2);
-      
-      // Create gradient for special stars
-      const gradient = ctx2d.createRadialGradient(x, y, 0, x, y, size);
-      gradient.addColorStop(0, `hsl(${i * 72}, 100%, 90%)`);
-      gradient.addColorStop(1, `hsl(${i * 72}, 100%, 50%, 0.3)`);
-      
-      ctx2d.fillStyle = gradient;
       ctx2d.fill();
+    });
+
+    ctx2d.restore();
+  }
+
+  // Draw inner colorful core mandala
+  const J = [[0, 1], [-1, 0]];
+  const t = florrState.time;
+
+  // Core layers with audio modulation
+  const corePulse = 1 + florrState.beatPulse * 1.5 + beatIntensity * 1.2; // Much stronger pulse
+  const coreH = [[corePulse + 0.6 * Math.sin(t * 1.5), 0], [0, 0.7]]; // More compression (0.7 instead of 1)
+  const M_core = expm(matMul(J, coreH), Math.sin(t) * (1 + audioEnergy * 0.3));
+
+  const coreScale = 120 * (1 + audioEnergy * 0.2);
+  drawEllipse(M_core, 0.3, 'rgba(255,215,0,0.9)', 0.7 + audioEnergy * 0.4, coreScale, cx, cy);
+  drawEllipse(M_core, 0.25, 'rgba(255,240,100,0.8)', 0.7 + audioEnergy * 0.4, coreScale + 10, cx, cy);
+  drawEllipse(M_core, 0.35, 'rgba(252, 224, 7, 1)', 0.6 + audioEnergy * 0.4, coreScale + 20, cx, cy);
+
+  // Additional petals with audio-responsive colors
+  const petals = [];
+  for (let i = 0; i < 8; i++) {
+    const ω = 0.5 + 0.05 * i;
+    const H = [[ω * ω, 0], [0, 1]];
+    const JH = matMul(J, H);
+    petals.push({ JH, ω, r: 0.5 + 0.07 * i });
+  }
+
+  for (let i = 0; i < petals.length; i++) {
+    const { r } = petals[i];
+    const phase = Math.sin(t + i * 0.6) * (1 + audioEnergy * 0.4);
+    const modH = [
+  [1 + 0.4 * Math.sin(t * 1.6 + i) * (1 + beatIntensity * 0.4), 0.2 * Math.cos(t * 1.4 + i)],
+  [0.2 * Math.cos(t * 1.4 + i), 0.9 - 0.18 * Math.sin(t * 1.6 + i) * (1 + beatIntensity * 0.6)]
+];
+    const JH_t = matMul(J, modH);
+    const M = expm(JH_t, phase);
+    
+    // Audio-responsive hue shifting
+    const hueShift = audioEnergy * 100;
+    const hue = (t * 30 + i * 40 + hueShift) % 360;
+
+    for (let k = 0; k < 8; k++) {
+      const angle = k * (Math.PI / 4);
+      const petalScale = 200 + 15 * i + beatIntensity * 20;
+      const alpha = 0.45 + audioEnergy * 0.6;
+      drawEllipse(M, r * (1 + beatIntensity * 0.3), `hsl(${hue}, 100%, 80%)`, alpha, petalScale, cx, cy, angle);
     }
   }
 
-  // 5. Mask style (previously Hacker)
+  // Rotate color palette occasionally
+  if (Math.random() < 0.002) {
+    florrState.currentPalette = (florrState.currentPalette + 1) % florrState.colorPalettes.length;
+  }
+}
+
+
+
+
+function renderAurora() {
+  
+}
+
+  // 4. Storm style
+  function renderStorm() {
+    
+    }
+  
+  // Bezier curve control points
+const P0 = [0.00, 0.82];
+const P1 = [0.25, 0.76];
+const P2 = [0.65, 0.53];
+const P3 = [1.00, 0.58];
+const WaveP0 = [0.00, 0.25];
+const WaveP1 = [0.10, 0.45];
+const WaveP2 = [0.36, 0.04];
+const WaveP3 = [0.46, 0.42];
+const NewBlueBandP0 = [0.38, 0.20];
+const NewBlueBandP1 = [0.55, 0.32];
+const NewBlueBandP2 = [0.85, 0.38];
+const NewBlueBandP3 = [1.00, 0.42];
+const IndigoWave1P0 = [0.40, 1.00];
+const IndigoWave1P1 = [0.46, 0.92];
+const IndigoWave1P2 = [0.60, 0.87];
+const IndigoWave1P3 = [0.68, 0.90];
+const IndigoWave2P0 = [0.70, 1.00];
+const IndigoWave2P1 = [0.78, 0.90];
+const IndigoWave2P2 = [0.93, 0.82];
+const IndigoWave2P3 = [1.00, 0.82];
+
+// Bezier curve functions
+function bezierPoint(t) {
+  const u = 1 - t;
+  const tt = t*t, uu = u*u;
+  const uuu = uu * u, ttt = tt * t;
+  const x = uuu*P0[0] + 3*uu*t*P1[0] + 3*u*tt*P2[0] + ttt*P3[0];
+  const y = uuu*P0[1] + 3*uu*t*P1[1] + 3*u*tt*P2[1] + ttt*P3[1];
+  return [x, y];
+}
+
+function bezierTangent(t) {
+  const ax = 3*(P1[0] - P0[0]);
+  const ay = 3*(P1[1] - P0[1]);
+  const bx = 3*(P2[0] - P1[0]) - ax;
+  const by = 3*(P2[1] - P1[1]) - ay;
+  const cx = P3[0] - P0[0] - ax - bx;
+  const cy = P3[1] - P0[1] - ay - by;
+  const x = (3*cx*t*t + 2*bx*t + ax);
+  const y = (3*cy*t*t + 2*by*t + ay);
+  return [x, y];
+}
+
+ function waveBezierPoint(t){
+    const u = 1 - t;
+    const tt = t*t, uu = u*u;
+    const uuu = uu * u, ttt = tt * t;
+    const x = uuu*WaveP0[0] + 3*uu*t*WaveP1[0] + 3*u*tt*WaveP2[0] + ttt*WaveP3[0];
+    const y = uuu*WaveP0[1] + 3*uu*t*WaveP1[1] + 3*u*tt*WaveP2[1] + ttt*WaveP3[1];
+    return [x, y];
+  }
+
+  function waveBezierTangent(t){
+    const ax = 3*(WaveP1[0] - WaveP0[0]);
+    const ay = 3*(WaveP1[1] - WaveP0[1]);
+    const bx = 3*(WaveP2[0] - WaveP1[0]) - ax;
+    const by = 3*(WaveP2[1] - WaveP1[1]) - ay;
+    const cx = WaveP3[0] - WaveP0[0] - ax - bx;
+    const cy = WaveP3[1] - WaveP0[1] - ay - by;
+    const x = (3*cx*t*t + 2*bx*t + ax);
+    const y = (3*cy*t*t + 2*by*t + ay);
+    return [x, y];
+  }
+
+  // New blue band functions
+  function newBlueBandBezierPoint(t){
+    const u = 1 - t;
+    const tt = t*t, uu = u*u;
+    const uuu = uu * u, ttt = tt * t;
+    const x = uuu*NewBlueBandP0[0] + 3*uu*t*NewBlueBandP1[0] + 3*u*tt*NewBlueBandP2[0] + ttt*NewBlueBandP3[0];
+    const y = uuu*NewBlueBandP0[1] + 3*uu*t*NewBlueBandP1[1] + 3*u*tt*NewBlueBandP2[1] + ttt*NewBlueBandP3[1];
+    return [x, y];
+  }
+
+  function newBlueBandBezierTangent(t){
+    const ax = 3*(NewBlueBandP1[0] - NewBlueBandP0[0]);
+    const ay = 3*(NewBlueBandP1[1] - NewBlueBandP0[1]);
+    const bx = 3*(NewBlueBandP2[0] - NewBlueBandP1[0]) - ax;
+    const by = 3*(NewBlueBandP2[1] - NewBlueBandP1[1]) - ay;
+    const cx = NewBlueBandP3[0] - NewBlueBandP0[0] - ax - bx;
+    const cy = NewBlueBandP3[1] - NewBlueBandP0[1] - ay - by;
+    const x = (3*cx*t*t + 2*bx*t + ax);
+    const y = (3*cy*t*t + 2*by*t + ay);
+    return [x, y];
+  }
+// Indigo wave 1 functions
+function indigoWave1BezierPoint(t){
+  const u = 1 - t;
+  const tt = t*t, uu = u*u;
+  const uuu = uu * u, ttt = tt * t;
+  const x = uuu*IndigoWave1P0[0] + 3*uu*t*IndigoWave1P1[0] + 3*u*tt*IndigoWave1P2[0] + ttt*IndigoWave1P3[0];
+  const y = uuu*IndigoWave1P0[1] + 3*uu*t*IndigoWave1P1[1] + 3*u*tt*IndigoWave1P2[1] + ttt*IndigoWave1P3[1];
+  return [x, y];
+}
+
+function indigoWave1BezierTangent(t){
+  const ax = 3*(IndigoWave1P1[0] - IndigoWave1P0[0]);
+  const ay = 3*(IndigoWave1P1[1] - IndigoWave1P0[1]);
+  const bx = 3*(IndigoWave1P2[0] - IndigoWave1P1[0]) - ax;
+  const by = 3*(IndigoWave1P2[1] - IndigoWave1P1[1]) - ay;
+  const cx = IndigoWave1P3[0] - IndigoWave1P0[0] - ax - bx;
+  const cy = IndigoWave1P3[1] - IndigoWave1P0[1] - ay - by;
+  const x = (3*cx*t*t + 2*bx*t + ax);
+  const y = (3*cy*t*t + 2*by*t + ay);
+  return [x, y];
+}
+
+// Indigo wave 2 functions
+function indigoWave2BezierPoint(t){
+  const u = 1 - t;
+  const tt = t*t, uu = u*u;
+  const uuu = uu * u, ttt = tt * t;
+  const x = uuu*IndigoWave2P0[0] + 3*uu*t*IndigoWave2P1[0] + 3*u*tt*IndigoWave2P2[0] + ttt*IndigoWave2P3[0];
+  const y = uuu*IndigoWave2P0[1] + 3*uu*t*IndigoWave2P1[1] + 3*u*tt*IndigoWave2P2[1] + ttt*IndigoWave2P3[1];
+  return [x, y];
+}
+
+function indigoWave2BezierTangent(t){
+  const ax = 3*(IndigoWave2P1[0] - IndigoWave2P0[0]);
+  const ay = 3*(IndigoWave2P1[1] - IndigoWave2P0[1]);
+  const bx = 3*(IndigoWave2P2[0] - IndigoWave2P1[0]) - ax;
+  const by = 3*(IndigoWave2P2[1] - IndigoWave2P1[1]) - ay;
+  const cx = IndigoWave2P3[0] - IndigoWave2P0[0] - ax - bx;
+  const cy = IndigoWave2P3[1] - IndigoWave2P0[1] - ay - by;
+  const x = (3*cx*t*t + 2*bx*t + ax);
+  const y = (3*cy*t*t + 2*by*t + ay);
+  return [x, y];
+}
+// Swirl center function (modified for your website)
+function getSwirlCenters() {
+  const W = canvas.width;
+  const H = canvas.height;
+  return [
+    { x: W*0.86, y: H*0.10, radius: Math.min(W,H)*0.36 },
+    { x: W*0.85, y: H*0.10, radius: Math.min(W,H)*0.14 },
+    { x: W*0.72, y: H*0.20, radius: Math.min(W,H)*0.07 },
+    { x: W*0.40, y: H*0.60, radius: Math.min(W,H)*0.14 },
+    { x: W*0.30, y: H*0.08, radius: Math.min(W,H)*0.07 },
+    { x: W*0.37, y: H*0.35, radius: Math.min(W,H)*0.001 },
+    { x: W*0.14, y: H*0.45, radius: Math.min(W,H)*0.08 },
+    { x: W*0.07, y: H*0.40, radius: Math.min(W,H)*0.01 }
+  ];
+}
+
+// Flow function
+function flowAt(x, y, t, p) {
+  const swirls = getSwirlCenters();
+  const swirl = swirls[p.swirlIndex];
+  const dx = x - swirl.x, dy = y - swirl.y;
+  const r = Math.sqrt(dx*dx + dy*dy) + 0.0001;
+  let ux = -dy / r;
+  let uy = dx / r;
+
+  const n1 = Math.sin((x*0.004 + t*0.6) + Math.cos(y*0.003 + t*0.3));
+  const n2 = Math.cos((y*0.006 - t*0.4) + Math.sin(x*0.005 - t*0.2));
+  const noiseX = (n1*0.6 + n2*0.3);
+  const noiseY = (n2*0.6 + n1*0.3);
+
+  const radFactor = Math.max(0, 1 - (r / (swirl.radius * 0.8)));
+  const swirlStrength = 1.0; // Default value since we don't have UI controls
+  const fx = ux * (0.9 + 2*radFactor*swirlStrength) + noiseX * 0.5 * radFactor;
+  const fy = uy * (0.9 + 2*radFactor*swirlStrength) + noiseY * 0.5 * radFactor;
+
+  const escapeRate = 0.2; // Default value
+  if (r > swirl.radius * 0.8 && Math.random() < escapeRate * 0.005) {
+    p.isEscaped = true;
+  }
+  return { fx, fy, r };
+}
+
+// Particle initialization function
+function initStarryNightParticles() {
+  const bandCount = 1100; // Default density
+  const swirlCount = 1060; // Default density
+  
+  // Initialize all particle arrays
+  bandParticles = []; waveParticles = []; newBlueBandParticles = [];
+  swirlParticles = []; indigoWave1Particles = []; indigoWave2Particles = [];
+  
+  // Copy the particle initialization logic from your original initBandParticles
+  // and initSwirlParticles functions, but remove the UI dependency
+
+  const mainBandCount = Math.floor(bandCount * 0.4);
+  for (let i=0;i<mainBandCount;i++){
+    const t = Math.random();
+    bandParticles.push({
+      t,
+      speed: 0.001 + Math.random()*0.0012,
+      offset: (Math.random()-0.5) * 0.035,
+      baseOffset: (Math.random()-0.5) * 0.035,
+      size: 1.5 + Math.random()*1.8,
+      color: choice(bandPalette),
+      life: 400 + Math.random()*600,
+      age: Math.floor(Math.random()*600)
+    });
+  }
+  const waveBandCount = Math.floor(bandCount * 0.35);
+    for (let i=0;i<waveBandCount;i++){
+      const t = Math.random();
+      waveParticles.push({
+        t,
+        speed: 0.0012 + Math.random()*0.0015,
+        offset: (Math.random()-0.5) * 0.04,  // Increased width
+        baseOffset: (Math.random()-0.5) * 0.04,
+        size: 1.8 + Math.random()*2.0,  // Increased size
+        color: choice(wavePalette),
+        life: 400 + Math.random()*500,  // Longer life
+        age: Math.floor(Math.random()*400)
+      });
+    }
+
+    const newBlueBandCount = Math.floor(bandCount * 0.25);
+    for (let i=0;i<newBlueBandCount;i++){
+      const t = Math.random();
+      newBlueBandParticles.push({
+        t,
+        speed: 0.0011 + Math.random()*0.0013,
+        offset: (Math.random()-0.5) * 0.035,
+        baseOffset: (Math.random()-0.5) * 0.035,
+        size: 1.7 + Math.random()*1.6,
+        color: choice(wavePalette),  // Use same blue palette
+        life: 400 + Math.random()*450,
+        age: Math.floor(Math.random()*450)
+      });
+    }
+    // Add this inside initBandParticles function, after the other band initializations:
+
+
+const indigoWave1Count = Math.floor(bandCount * 0.25);
+for (let i=0;i<indigoWave1Count;i++){
+  const t = Math.random();
+  indigoWave1Particles.push({
+    t,
+    speed: 0.0011 + Math.random()*0.0012,
+    offset: (Math.random()-0.5) * 0.025,
+    baseOffset: (Math.random()-0.5) * 0.025,
+    size: 3.2 + Math.random()*1.2,
+    color: choice(indigoPalette),
+    life: 400 + Math.random()*400,
+    age: Math.floor(Math.random()*400)
+  });
+}
+
+
+const indigoWave2Count = Math.floor(bandCount * 0.25);
+for (let i=0;i<indigoWave2Count;i++){
+  const t = Math.random();
+  indigoWave2Particles.push({
+    t,
+    speed: 0.0007 + Math.random()*0.0012,
+    offset: (Math.random()-0.5) * 0.025,
+    baseOffset: (Math.random()-0.5) * 0.025,
+    size: 3.2 + Math.random()*1.2,
+    color: choice(indigoPalette),
+    life: 400 + Math.random()*400,
+    age: Math.floor(Math.random()*400)
+  });
+}
+  
+
+    // Initialize all other particle types similarly...
+  // Copy the rest of your particle initialization code here
+  
+  // Initialize swirl particles
+  const swirls = getSwirlCenters();
+  for (let i=0;i<swirlCount;i++){
+    const swirlIndex = Math.floor(Math.random() * swirls.length);
+    const s = swirls[swirlIndex];
+    const angle = Math.random() * Math.PI * 2;
+    const distance = Math.pow(Math.random(), 2.3) * s.radius*1.2;
+    const x = s.x + Math.cos(angle) * distance;
+    const y = s.y + Math.sin(angle) * distance;
+
+    swirlParticles.push({
+      x, y,
+      vx: 0, vy: 0,
+      life: rand(120, 600),
+      age: rand(0, 300),
+      size: rand(1.6, 2.4),
+      color: choice(swirlPalette),
+      wobble: rand(0.002, 0.01) + Math.random()*0.02,
+      phase: Math.random()*Math.PI*2,
+      curlOff: rand(0,1000),
+      swirlIndex,
+      baseX: x,
+      baseY: y,
+      isEscaped: false
+    });
+  }
+}
+
+  // 5. StarryNight style
+function renderStarryNight() {
+  if (!analyser || !dataArray) return;
+  
+  // Get audio energy for flow speed adjustment
+  analyser.getByteFrequencyData(dataArray);
+  let audioEnergy = 0;
+  for (let i = 0; i < dataArray.length; i++) {
+    audioEnergy += dataArray[i] / 255;
+  }
+  audioEnergy = audioEnergy / dataArray.length;
+  
+  // Adjust flow speed based on audio energy (0.1x to 3x range)
+  const baseSpeed = 0.25;
+  const audioAdjustedSpeed = baseSpeed * (0.12 + audioEnergy * 5);
+  
+  const t = performance.now()/1000;
+  const dt = 0.016; // Fixed timestep for consistent animation
+  
+  // Clear with fade
+  ctx2d.fillStyle = 'rgba(0, 0, 0, 0.04)';
+  ctx2d.fillRect(0,0,canvas.width,canvas.height);
+
+  const W = canvas.width, H = canvas.height;
+
+  // Draw bands first (background)
+  for (let p of bandParticles){
+    p.age++;
+    p.t += p.speed * dt * 60;
+    if (p.t > 1) {
+      p.t = 0;
+      p.age = 0;
+      p.baseOffset = (Math.random()-0.5) * 0.035;
+      p.color = choice(bandPalette);
+    }
+
+    const widthTaper = 4.0 + p.t * 2.5;
+    p.offset = p.baseOffset * widthTaper;
+
+    const [nx, ny] = bezierPoint(p.t);
+    const [tx, ty] = bezierTangent(p.t);
+    const len = Math.hypot(tx, ty) || 1;
+    const ux = tx / len, uy = ty / len;
+    const px = -uy, py = ux;
+
+    const time = performance.now()/1000;
+    const jitter = noise(nx*100, ny*100, time) * 0.006;
+    const curvOffset = p.offset + jitter * 0.8;
+
+    const sx = nx * W + px * curvOffset * W;
+    const sy = ny * H + py * curvOffset * H;
+
+    const alpha = Math.max(0.04, 1 - (p.age / p.life));
+    stamp(sx, sy, p.size*1.8, p.color, alpha);
+  }
+
+  // Draw blue top band with increased density and size
+  for (let p of waveParticles){
+    p.age++;
+    p.t += p.speed * dt * 60;
+    if (p.t > 1) {
+      p.t = 0;
+      p.age = 0;
+      p.baseOffset = (Math.random()-0.5) * 0.04;
+      p.color = choice(wavePalette);
+    }
+
+    let widthTaper = 9 + p.t * 3.0;
+    p.offset = p.baseOffset * widthTaper;
+
+    const [nx, ny] = waveBezierPoint(p.t);
+    const [tx, ty] = waveBezierTangent(p.t);
+    const len = Math.hypot(tx, ty) || 1;
+    const ux = tx / len, uy = ty / len;
+    const px = -uy, py = ux;
+
+    const time = performance.now()/1000;
+    const jitter = noise(nx*100, ny*100, time) * 0.004;
+    const curvOffset = p.offset + jitter * 0.6;
+
+    const sx = nx * W + px * curvOffset * W;
+    const sy = ny * H + py * curvOffset * H;
+
+    const alpha = Math.max(0.06, 1 - (p.age / p.life));
+    stamp(sx, sy, p.size*2.0, p.color, alpha);
+  }
+
+  // Draw new blue band
+  for (let p of newBlueBandParticles){
+    p.age++;
+    p.t += p.speed * dt * 60;
+    if (p.t > 1) {
+      p.t = 0;
+      p.age = 0;
+      p.baseOffset = (Math.random()-0.5) * 0.035;
+      p.color = choice(wavePalette);
+    }
+
+    let widthTaper = 10 + p.t * 2.0;
+    p.offset = p.baseOffset * widthTaper;
+
+    const [nx, ny] = newBlueBandBezierPoint(p.t);
+    const [tx, ty] = newBlueBandBezierTangent(p.t);
+    const len = Math.hypot(tx, ty) || 1;
+    const ux = tx / len, uy = ty / len;
+    const px = -uy, py = ux;
+
+    const time = performance.now()/1000;
+    const jitter = noise(nx*100, ny*100, time) * 0.004;
+    const curvOffset = p.offset + jitter * 0.6;
+
+    const sx = nx * W + px * curvOffset * W;
+    const sy = ny * H + py * curvOffset * H;
+
+    const alpha = Math.max(0.06, 1 - (p.age / p.life));
+    stamp(sx, sy, p.size*1.8, p.color, alpha);
+  }
+
+  // Draw swirls on top with audio-adjusted speed
+  for (let p of swirlParticles){
+    p.age++;
+    if (p.age > p.life){
+      const swirls = getSwirlCenters();
+      const s = swirls[p.swirlIndex];
+      const angle = Math.random()*Math.PI*2;
+      const distance = Math.pow(Math.random(),2.3)*s.radius*1.2;
+      p.x = s.x + Math.cos(angle)*distance;
+      p.y = s.y + Math.sin(angle)*distance;
+      p.vx = p.vy = 0;
+      p.age = 0;
+      p.life = rand(120,700);
+      p.size = rand(1.0,1.8);
+      p.color = choice(swirlPalette);
+      p.isEscaped = false;
+    }
+    const px = p.x, py = p.y;
+    const f = flowAt(p.x,p.y,t+p.curlOff,p);
+    
+    // Use audio-adjusted speed instead of UI speed
+    const wob = Math.sin(p.phase + p.age * p.wobble * 50) * 0.5;
+    p.vx = (p.vx*0.88 + (f.fx + wob*0.8)*0.9*audioAdjustedSpeed)*0.98;
+    p.vy = (p.vy*0.88 + (f.fy + wob*-0.6)*0.9*audioAdjustedSpeed)*0.98;
+    p.x += p.vx;
+    p.y += p.vy;
+    const alpha = Math.max(0.04,1-(p.age/(p.life*0.9)));
+    drawStrokeSeg(p,px,py,alpha);
+  }
+
+  // Draw indigo wave 1
+  for (let p of indigoWave1Particles){
+    p.age++;
+    p.t += p.speed * dt * 60;
+    if (p.t > 1) {
+      p.t = 0;
+      p.age = 0;
+      p.baseOffset = (Math.random()-0.5) * 0.025;
+      p.color = choice(indigoPalette);
+    }
+
+    let widthTaper = 8 + p.t * 2.0;
+    p.offset = p.baseOffset * widthTaper;
+
+    const [nx, ny] = indigoWave1BezierPoint(p.t);
+    const [tx, ty] = indigoWave1BezierTangent(p.t);
+    const len = Math.hypot(tx, ty) || 1;
+    const ux = tx / len, uy = ty / len;
+    const px = -uy, py = ux;
+
+    const time = performance.now()/1000;
+    const jitter = noise(nx*100, ny*100, time) * 0.003;
+    const curvOffset = p.offset + jitter * 0.5;
+
+    const sx = nx * W + px * curvOffset * W;
+    const sy = ny * H + py * curvOffset * H;
+
+    const alpha = Math.max(0.05, 1 - (p.age / p.life));
+    stamp(sx, sy, p.size*1.4, p.color, alpha);
+  }
+
+  // Draw indigo wave 2
+  for (let p of indigoWave2Particles){
+    p.age++;
+    p.t += p.speed * dt * 60;
+    if (p.t > 1) {
+      p.t = 0;
+      p.age = 0;
+      p.baseOffset = (Math.random()-0.5) * 0.025;
+      p.color = choice(indigoPalette);
+    }
+
+    let widthTaper = 8 + p.t * 2.0;
+    p.offset = p.baseOffset * widthTaper;
+
+    const [nx, ny] = indigoWave2BezierPoint(p.t);
+    const [tx, ty] = indigoWave2BezierTangent(p.t);
+    const len = Math.hypot(tx, ty) || 1;
+    const ux = tx / len, uy = ty / len;
+    const px = -uy, py = ux;
+
+    const time = performance.now()/1000;
+    const jitter = noise(nx*100, ny*100, time) * 0.003;
+    const curvOffset = p.offset + jitter * 0.5;
+
+    const sx = nx * W + px * curvOffset * W;
+    const sy = ny * H + py * curvOffset * H;
+
+    const alpha = Math.max(0.05, 1 - (p.age / p.life));
+    stamp(sx, sy, p.size*1.4, p.color, alpha);
+  }
+}
+
+// Helper functions needed for the Starry Night renderer
+function rand(a=0,b=1){ return a + Math.random()*(b-a); }
+function choice(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+function noise(x,y,t){
+  return Math.sin(x*0.02 + t*0.6) * 0.5 + Math.cos(y*0.018 - t*0.4) * 0.5;
+}
+
+function stamp(x, y, size, color, alpha=1) {
+  ctx2d.save();
+  ctx2d.globalCompositeOperation = 'source-over';
+  ctx2d.globalAlpha = alpha;
+  ctx2d.beginPath();
+  ctx2d.fillStyle = color;
+  ctx2d.ellipse(x, y, size*1.2, size*0.8, 0, 0, Math.PI*2);
+  ctx2d.fill();
+  ctx2d.restore();
+}
+
+function drawStrokeSeg(p, px, py, alpha) {
+  ctx2d.save();
+  ctx2d.globalCompositeOperation = 'lighter';
+  ctx2d.globalAlpha = Math.max(0.06, alpha);
+  ctx2d.lineJoin = 'round';
+  ctx2d.lineCap = 'round';
+  const w = 4 * p.size; // BRUSH_SIZE = 4
+  ctx2d.lineWidth = Math.max(1, w * 1.1);
+  ctx2d.strokeStyle = p.color;
+  ctx2d.beginPath();
+  ctx2d.moveTo(px, py);
+  const mx = (px + p.x) * 0.5;
+  const my = (py + p.y) * 0.5;
+  const dx = p.x - px, dy = p.y - py;
+  const perpX = -dy * 0.2 * p.size;
+  const perpY = dx * 0.2 * p.size;
+  const cx = mx + perpX * Math.sin(p.phase + p.age*0.01);
+  const cy = my + perpY * Math.cos(p.phase - p.age*0.01);
+  ctx2d.quadraticCurveTo(cx, cy, p.x, p.y);
+  ctx2d.stroke();
+  ctx2d.globalAlpha = Math.min(0.38, alpha * 0.6);
+  ctx2d.lineWidth = Math.max(0.8, Math.max(1, w*0.25));
+  ctx2d.strokeStyle = 'rgba(255,245,200,0.9)';
+  ctx2d.beginPath();
+  ctx2d.moveTo(px*0.98 + p.x*0.02, py*0.98 + p.y*0.02);
+  ctx2d.quadraticCurveTo(cx, cy, p.x, p.y);
+  ctx2d.stroke();
+  ctx2d.restore();
+}
+
+
+
+// Define color palettes
+const bandPalette = [
+  'rgba(255,220,80,0.9)',   // Bright yellow
+  'rgba(255,220,80,0.9)',   // Warm gold
+  'rgba(60,120,200,0.9)',   // Medium blue
+  'rgba(40,80,180,0.9)',    // Deep blue
+  'rgba(255, 248, 60, 0.9)',   // Warm gold
+];
+
+const wavePalette = [
+  'rgba(100,180,255,0.9)',  // Light blue
+  'rgba(120,200,255,0.9)',  // Bright light blue
+  'rgba(80,160,240,0.9)',   // Medium blue
+  'rgba(140,220,255,0.9)',  // Very light blue
+  'rgba(60,140,255,0.9)'    // Rich blue
+];
+
+const swirlPalette = [
+  'rgba(255,220,80,0.95)',  // Bright yellow
+  'rgba(255,200,60,0.90)',  // Warm gold
+  'rgba(255,180,40,0.85)',  // Orange-yellow
+  'rgba(255,160,30,0.80)',  // Deep orange
+  'rgba(220,140,20,0.75)',  // Amber
+  'rgba(255,220,80,0.95)',  // Bright yellow
+];
+
+const indigoPalette = [
+  'rgba(0, 160, 255, 0.95)',    
+  'rgba(40, 70, 180, 0.9)',    
+  'rgba(80, 110, 200, 0.8)',  
+  'rgba(35, 50, 100, 0.8)',
+  'rgba(255, 250, 160, 0.85)',
+];
+
+  // 6. Mask style (previously Hacker)
   function renderMask() {
     dprSizeCanvas();
     clearCanvas();
     
-    analyser.getByteFrequencyData(dataArray);
-    const cw = canvas.width;
-    const ch = canvas.height;
-    
-    // Dark background
-    ctx2d.fillStyle = "#001100";
-    ctx2d.fillRect(0, 0, cw, ch);
-    
-    // Matrix-like code rain
-    const chars = "01ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz$%#@!*&";
-    const fontSize = 14;
-    ctx2d.font = `${fontSize}px monospace`;
-    
-    // Calculate columns based on font size
-    const cols = Math.floor(cw / fontSize);
-    
-    // Draw falling characters
-    for (let i = 0; i < cols; i++) {
-      const freqIndex = Math.floor(i * bufferLength / cols);
-      const v = dataArray[freqIndex] / 255;
-      
-      // Vary the number of characters in this column based on frequency
-      const charCount = Math.floor(5 + v * 15);
-      
-      for (let j = 0; j < charCount; j++) {
-        const yPos = ((Date.now() / 30) + j * fontSize) % (ch + fontSize * 5);
-        const char = chars[Math.floor(Math.random() * chars.length)];
-        
-        // Fade out as they fall
-        const alpha = 1 - (yPos / ch);
-        
-        // Highlight the first character in each column
-        if (j === 0) {
-          ctx2d.fillStyle = `rgba(0, 255, 0, ${alpha})`;
-        } else {
-          ctx2d.fillStyle = `rgba(0, 200, 0, ${alpha * 0.7})`;
-        }
-        
-        ctx2d.fillText(char, i * fontSize, yPos);
-      }
-    }
-    
-    // Pulse effect based on overall volume
-    const energy = dataArray.reduce((sum, val) => sum + val, 0) / (bufferLength * 255);
-    if (energy > 0.5) {
-      ctx2d.strokeStyle = `rgba(0, 255, 0, ${0.2 + energy * 0.3})`;
-      ctx2d.lineWidth = 2;
-      ctx2d.beginPath();
-      ctx2d.arc(cw/2, ch/2, 50 + energy * 100, 0, Math.PI * 2);
-      ctx2d.stroke();
-    }
+
   }
 
-  // 6. Galaxy style
+  // 7. Galaxy style
   function renderGalaxy() {
-    dprSizeCanvas();
-    clearCanvas();
     
-    analyser.getByteFrequencyData(dataArray);
-    const cw = canvas.width;
-    const ch = canvas.height;
-    
-    // Space background
-    ctx2d.fillStyle = "#000010";
-    ctx2d.fillRect(0, 0, cw, ch);
-    
-    // Create galaxy center
-    const centerX = cw / 2;
-    const centerY = ch / 2;
-    
-    // Draw spiral arms
-    const armCount = 4;
-    const energy = dataArray.reduce((sum, val) => sum + val, 0) / (bufferLength * 255);
-    
-    for (let arm = 0; arm < armCount; arm++) {
-      const angleOffset = (arm * 2 * Math.PI) / armCount;
-      
-      for (let i = 0; i < 200; i++) {
-        const distance = 10 + i * 2;
-        const angle = angleOffset + (i * 0.05) + (Date.now() / 5000) * (0.5 + energy * 0.5);
-        
-        const x = centerX + Math.cos(angle) * distance;
-        const y = centerY + Math.sin(angle) * distance;
-        
-        const size = 1 + (i % 3);
-        const alpha = 0.2 + (i / 200) * 0.8;
-        
-        ctx2d.beginPath();
-        ctx2d.arc(x, y, size, 0, Math.PI * 2);
-        
-        // Vary star colors slightly
-        const hue = 240 + Math.sin(angle) * 30;
-        ctx2d.fillStyle = `hsla(${hue}, 70%, 80%, ${alpha})`;
-        ctx2d.fill();
-      }
-    }
-    
-    // Add central bulge with pulse effect
-    const pulse = 0.8 + Math.sin(Date.now() / 500) * 0.2 * energy;
-    const gradient = ctx2d.createRadialGradient(centerX, centerY, 0, centerX, centerY, 80 * pulse);
-    gradient.addColorStop(0, "rgba(255, 255, 200, 0.8)");
-    gradient.addColorStop(1, "rgba(200, 200, 100, 0)");
-    
-    ctx2d.beginPath();
-    ctx2d.arc(centerX, centerY, 80 * pulse, 0, Math.PI * 2);
-    ctx2d.fillStyle = gradient;
-    ctx2d.fill();
-    
-    // Add some random stars in the background
-    for (let i = 0; i < 100; i++) {
-      const x = Math.random() * cw;
-      const y = Math.random() * ch;
-      const size = Math.random() * 1.5;
-      const distFromCenter = Math.sqrt(Math.pow(x - centerX, 2) + Math.pow(y - centerY, 2));
-      
-      // Fade stars near the center
-      const alpha = Math.min(1, distFromCenter / 100) * 0.8;
-      
-      ctx2d.beginPath();
-      ctx2d.arc(x, y, size, 0, Math.PI * 2);
-      ctx2d.fillStyle = `rgba(255, 255, 255, ${alpha})`;
-      ctx2d.fill();
-    }
   }
 
-  // 7. Quantum style
+  // 8. Quantum style
   function renderQuantum() {
     dprSizeCanvas();
     clearCanvas();
     
-    analyser.getByteFrequencyData(dataArray);
-    const cw = canvas.width;
-    const ch = canvas.height;
-    
-    // Dark background
-    ctx2d.fillStyle = "#000015";
-    ctx2d.fillRect(0, 0, cw, ch);
-    
-    // Draw quantum particles
-    const particleCount = 50;
-    const energy = dataArray.reduce((sum, val) => sum + val, 0) / (bufferLength * 255);
-    
-    // Initialize particles if needed
-    if (particles.length === 0) {
-      particles = [];
-      for (let i = 0; i < particleCount; i++) {
-        particles.push({
-          x: Math.random() * cw,
-          y: Math.random() * ch,
-          vx: (Math.random() - 0.5) * 2,
-          vy: (Math.random() - 0.5) * 2,
-          size: Math.random() * 4 + 1,
-          connections: []
-        });
-      }
-    }
-    
-    // Update and draw particles
-    particles.forEach((p, i) => {
-      // Move particles
-      p.x += p.vx * (0.5 + energy * 0.5);
-      p.y += p.vy * (0.5 + energy * 0.5);
-      
-      // Bounce off walls
-      if (p.x < 0 || p.x > cw) p.vx *= -1;
-      if (p.y < 0 || p.y > ch) p.vy *= -1;
-      
-      // Draw particle
-      ctx2d.beginPath();
-      ctx2d.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-      ctx2d.fillStyle = `hsl(${i * 10 + hueRotation}, 100%, 60%)`;
-      ctx2d.fill();
-      
-      // Draw connections to nearby particles
-      p.connections = [];
-      particles.forEach((other, j) => {
-        if (i !== j) {
-          const dx = p.x - other.x;
-          const dy = p.y - other.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          
-          if (dist < 100) {
-            p.connections.push({ target: j, strength: 1 - dist / 100 });
-            
-            ctx2d.beginPath();
-            ctx2d.moveTo(p.x, p.y);
-            ctx2d.lineTo(other.x, other.y);
-            ctx2d.strokeStyle = `hsla(${i * 10 + hueRotation}, 100%, 50%, ${0.2 * (1 - dist / 100)})`;
-            ctx2d.lineWidth = 1;
-            ctx2d.stroke();
-          }
-        }
-      });
-    });
-    
-    // Rotate hues over time
-    hueRotation = (hueRotation + 1) % 360;
-    
-    // Add wave interference patterns
-    const time = Date.now() / 1000;
-    for (let i = 0; i < 5; i++) {
-      const freqIndex = Math.floor(i * bufferLength / 5);
-      const v = dataArray[freqIndex] / 255;
-      
-      ctx2d.beginPath();
-      for (let x = 0; x < cw; x += 10) {
-        const y = ch/2 + Math.sin(x * 0.02 + time * (1 + i)) * 30 * v;
-        if (x === 0) ctx2d.moveTo(x, y);
-        else ctx2d.lineTo(x, y);
-      }
-      ctx2d.strokeStyle = `hsla(${180 + i * 36}, 100%, 60%, ${0.3 + v * 0.4})`;
-      ctx2d.lineWidth = 2;
-      ctx2d.stroke();
-    }
   }
 
-  // 8. Aqua style
+  // 9. Aqua style
   function renderAqua() {
     dprSizeCanvas();
     clearCanvas();
     
     analyser.getByteFrequencyData(dataArray);
-    const cw = canvas.width;
-    const ch = canvas.height;
     
-    // Ocean gradient background
-    const gradient = ctx2d.createLinearGradient(0, 0, 0, ch);
-    gradient.addColorStop(0, "#004466");
-    gradient.addColorStop(1, "#001122");
-    ctx2d.fillStyle = gradient;
-    ctx2d.fillRect(0, 0, cw, ch);
     
     // Draw water waves
-    const time = Date.now() / 1000;
-    const energy = dataArray.reduce((sum, val) => sum + val, 0) / (bufferLength * 255);
+  
     
-    // Surface waves
-    ctx2d.beginPath();
-    for (let x = 0; x <= cw; x += 5) {
-      const y = ch * 0.3 + Math.sin(x * 0.02 + time) * 10 * energy;
-      if (x === 0) ctx2d.moveTo(x, y);
-      else ctx2d.lineTo(x, y);
-    }
-    ctx2d.lineTo(cw, ch);
-    ctx2d.lineTo(0, ch);
-    ctx2d.closePath();
-    ctx2d.fillStyle = "rgba(0, 100, 200, 0.4)";
-    ctx2d.fill();
-    
-    // Bubbles
-    for (let i = 0; i < 30; i++) {
-      const freqIndex = Math.floor(i * bufferLength / 30);
-      const v = dataArray[freqIndex] / 255;
-      
-      const x = (i * 40) % cw;
-      const y = ch - ((Date.now() / 50 + i * 20) % (ch * 0.7));
-      const size = 2 + v * 8;
-      
-      ctx2d.beginPath();
-      ctx2d.arc(x, y, size, 0, Math.PI * 2);
-      ctx2d.fillStyle = `rgba(255, 255, 255, ${0.2 + v * 0.5})`;
-      ctx2d.fill();
-      
-      // Add highlight to bubbles
-      ctx2d.beginPath();
-      ctx2d.arc(x - size/3, y - size/3, size/4, 0, Math.PI * 2);
-      ctx2d.fillStyle = "rgba(255, 255, 255, 0.8)";
-      ctx2d.fill();
-    }
-    
-    // Light rays from surface
-    for (let i = 0; i < 5; i++) {
-      const x = (i + 1) * cw / 6;
-      const angle = -Math.PI/4 + (Math.random() - 0.5) * 0.2;
-      const length = 100 + Math.random() * 100;
-      
-      ctx2d.beginPath();
-      ctx2d.moveTo(x, ch * 0.3);
-      ctx2d.lineTo(
-        x + Math.cos(angle) * length,
-        ch * 0.3 + Math.sin(angle) * length
-      );
-      ctx2d.strokeStyle = "rgba(255, 255, 255, 0.1)";
-      ctx2d.lineWidth = 2;
-      ctx2d.stroke();
-    }
-    
-    // Fish or other sea creatures
-    for (let i = 0; i < 3; i++) {
-      const freqIndex = Math.floor(i * bufferLength / 3);
-      const v = dataArray[freqIndex] / 255;
-      
-      const x = (Date.now() / 20 + i * 100) % (cw + 50) - 25;
-      const y = ch * 0.5 + Math.sin(x * 0.05) * 30;
-      
-      // Draw simple fish shape
-      ctx2d.fillStyle = `hsl(${30 + i * 60}, 80%, 50%)`;
-      ctx2d.beginPath();
-      ctx2d.ellipse(x, y, 15 + v * 10, 8 + v * 5, 0, 0, Math.PI * 2);
-      ctx2d.fill();
-      
-      // Tail
-      ctx2d.beginPath();
-      ctx2d.moveTo(x - 15, y);
-      ctx2d.lineTo(x - 25, y - 10);
-      ctx2d.lineTo(x - 25, y + 10);
-      ctx2d.closePath();
-      ctx2d.fill();
-    }
   }
 
-  // 9. Bars style
-  function renderBars() {
-    dprSizeCanvas();
-    clearCanvas();
-    
-    analyser.getByteFrequencyData(dataArray);
-    const cw = canvas.width;
-    const ch = canvas.height;
-    const barCount = 64;
-    const barWidth = cw / barCount;
-    
-    for (let i = 0; i < barCount; i++) {
-      const v = dataArray[Math.floor(i * bufferLength / barCount)] / 255;
-      const barHeight = v * ch * 0.8;
-      const hue = 240 - Math.round(v * 160);
-      ctx2d.fillStyle = `hsl(${hue}, 70%, ${40 + v * 30}%)`;
-      const x = i * barWidth;
-      ctx2d.fillRect(x, ch - barHeight, Math.max(barWidth - 1, 1), barHeight);
-    }
-  }
-
-  // 10. Waveform style
-  function renderWaveform() {
-    dprSizeCanvas();
-    clearCanvas();
-    
-    analyser.getByteTimeDomainData(dataArray);
-    const cw = canvas.width;
-    const ch = canvas.height;
-    
-    ctx2d.lineWidth = 2;
-    ctx2d.strokeStyle = '#0ff';
-    ctx2d.beginPath();
-    
-    const sliceWidth = cw / bufferLength;
-    let x = 0;
-    
-    for (let i = 0; i < bufferLength; i++) {
-      const v = dataArray[i] / 128.0;
-      const y = v * ch / 2;
-      
-      if (i === 0) {
-        ctx2d.moveTo(x, y);
-      } else {
-        ctx2d.lineTo(x, y);
-      }
-      
-      x += sliceWidth;
-    }
-    
-    ctx2d.stroke();
-  }
-
-  // 11. Circle style
-  function renderCircle() {
-    dprSizeCanvas();
-    clearCanvas();
-    
-    analyser.getByteFrequencyData(dataArray);
-    const cw = canvas.width;
-    const ch = canvas.height;
-    const centerX = cw / 2;
-    const centerY = ch / 2;
-    const radius = Math.min(cw, ch) * 0.4;
-    
-    ctx2d.lineWidth = 2;
-    
-    for (let i = 0; i < bufferLength; i++) {
-      const angle = (i * 2 * Math.PI) / bufferLength;
-      const v = dataArray[i] / 255;
-      const barHeight = v * radius * 0.5;
-      
-      const x1 = centerX + Math.cos(angle) * radius;
-      const y1 = centerY + Math.sin(angle) * radius;
-      const x2 = centerX + Math.cos(angle) * (radius + barHeight);
-      const y2 = centerY + Math.sin(angle) * (radius + barHeight);
-      
-      const hue = (i / bufferLength) * 360;
-      ctx2d.strokeStyle = `hsl(${hue}, 80%, 60%)`;
-      
-      ctx2d.beginPath();
-      ctx2d.moveTo(x1, y1);
-      ctx2d.lineTo(x2, y2);
-      ctx2d.stroke();
-    }
-  }
-
-  // 12. Manim style (placeholder)
+// 10. Manim style (placeholder)
   function renderManim() {
     dprSizeCanvas();
     clearCanvas();
     // Add your Manim style implementation here
   }
 
-  // 13. Bounce+Neon Pulse style (placeholder)
+  
+  // 11. Bounce+Neon Pulse style (placeholder)
   function renderBounce() {
     dprSizeCanvas();
     clearCanvas();
     // Add your Bounce+Neon Pulse style implementation here
   }
 
-  // 14. Waves style (placeholder)
-  function renderWaves() {
-    dprSizeCanvas();
-    clearCanvas();
-    // Add your Waves style implementation here
-  }
-
-  // 15. Metropolis style (placeholder)
+  
+  // 12. Metropolis style (placeholder)
   function renderMetro() {
     dprSizeCanvas();
     clearCanvas();
     // Add your Metropolis style implementation here
   }
 
-  // 16. Firework style (placeholder)
+  // 13. Firework style (placeholder)
   function renderFire(){
     dprSizeCanvas();
     clearCanvas();
     // Add your Firework style implementation here
   }
 
-  // 17. Rain style (placeholder)
+  // 14. Rain style (placeholder)
   function renderRain() {
     dprSizeCanvas();
     clearCanvas();
     // Add your Rain style implementation here
   }
-
-// ----- Aurora GL system -----
-function initAuroraGL(canvas, getBandEnergies, options = {}) {
-  const gl = canvas.getContext("webgl");
-  if (!gl) { 
-    console.error("WebGL not supported"); 
-    return null; 
-  }
-
-  const DPR = window.devicePixelRatio || 1;
-  const pixelRatio = options.pixelRatio || DPR;
-
-  const vsSource = `
-    attribute vec2 a_pos;
-    varying vec2 v_uv;
-    void main() {
-      v_uv = a_pos * 0.5 + 0.5;
-      gl_Position = vec4(a_pos, 0.0, 1.0);
-    }
-  `;
-
-  const fsSource = `
-    precision highp float;
-    varying vec2 v_uv;
-    uniform float u_time;
-    uniform vec2 u_resolution;
-    uniform vec4 u_bands; // energies for 4 bands (0..1)
-    uniform float u_speed;
-    uniform float u_saturation;
-    uniform float u_starDensity;
-    uniform float u_starSize;
-    uniform float u_glow; // global glow intensity
-
-    // --------------------------
-    // 2D Simplex / Classic noise
-    // Ashima / IQ style (small, efficient)
-    // --------------------------
-    vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-    vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-    vec3 permute(vec3 x) { return mod289(((x*34.0)+1.0)*x); }
-
-    float snoise(vec2 v){
-      const vec4 C = vec4(0.211324865405187,  // (3.0-sqrt(3.0))/6.0
-                          0.366025403784439,  // 0.5*(sqrt(3.0)-1.0)
-                         -0.577350269189626,  // -1.0 + 2.0 * C.x
-                          0.024390243902439); // 1.0/41.0
-      vec2 i = floor(v + dot(v, C.yy) );
-      vec2 x0 = v - i + dot(i, C.xx);
-
-      vec2 i1;
-      i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
-
-      vec4 x12 = x0.xyxy + C.xxzz;
-      x12.xy -= i1;
-
-      i = mod289(i);
-      vec3 p = permute( permute( i.y + vec3(0.0, i1.y, 1.0 ))
-                      + i.x + vec3(0.0, i1.x, 1.0 ));
-
-      vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
-      m = m*m; m = m*m;
-
-      vec3 x = 2.0 * fract(p * C.www) - 1.0;
-      vec3 h = abs(x) - 0.5;
-      vec3 ox = floor(x + 0.5);
-      vec3 a0 = x - ox;
-
-      m *= 1.79284291400159 - 0.85373472095314 * ( a0*a0 + h*h );
-
-      vec3 g;
-      g.x  = a0.x * x0.x + h.x * x0.y;
-      g.yz = a0.yz * x12.xz + h.yz * x12.yw;
-      return 130.0 * dot(m, g);
-    }
-
-    // hash for star pattern
-    float hash21(vec2 p) {
-      p = fract(p * vec2(123.34, 345.45));
-      p += dot(p, p + 34.345);
-      return fract(p.x * p.y);
-    }
-
-    // hue to rgb (somewhat soft)
-    vec3 h2rgb(float h, float s, float v) {
-      h = fract(h);
-      float i = floor(h * 6.0);
-      float f = h * 6.0 - i;
-      float p = v * (1.0 - s);
-      float q = v * (1.0 - f * s);
-      float t = v * (1.0 - (1.0 - f) * s);
-      vec3 col;
-      if (i == 0.0) col = vec3(v,t,p);
-      else if (i == 1.0) col = vec3(q,v,p);
-      else if (i == 2.0) col = vec3(p,v,t);
-      else if (i == 3.0) col = vec3(p,q,v);
-      else if (i == 4.0) col = vec3(t,p,v);
-      else col = vec3(v,p,q);
-      return col;
-    }
-
-    void main() {
-      vec2 uv = v_uv;
-      vec2 p = uv * u_resolution.xy / min(u_resolution.x, u_resolution.y);
-
-      // base sky
-      vec3 sky = vec3(0.01, 0.02, 0.03);
-
-      // time warp and scale
-      float t = u_time * u_speed * 0.2;
-
-      // We'll create 4 layered curtains
-      vec3 accum = vec3(0.0);
-
-      // parameters per-band
-      for (int b = 0; b < 4; b++) {
-        float bandEnergy = u_bands[b]; // 0..1
-        // horizontal scale for noise and vertical displacement
-        float scale = mix(0.6, 2.5, float(b) * 0.3);
-        float yShift = float(b) * 0.12; // vertical offset per band
-        float bandSpeed = mix(0.4, 1.6, float(b) * 0.4);
-
-        // sample noise - create vertical curtain by sampling noise with uv.x + time
-        float nx = uv.x * scale * 3.0;
-        float ny = uv.y * 1.5 - yShift * 2.0 + t * bandSpeed;
-        float n = snoise(vec2(nx + float(b)*10.0, ny));
-
-        // create a curtain mask: stronger near some y position influenced by n
-        float center = 0.55 + n * 0.25; // center y of curtain
-        float width = 0.25 + bandEnergy * 0.5; // width of curtain
-        float mask = smoothstep(center + width, center + width*0.2, uv.y) - smoothstep(center - width*0.2, center - width, uv.y);
-        // soften edges by additional noise
-        mask *= smoothstep(0.0, 1.0, bandEnergy*1.5 + snoise(vec2(nx*0.5 + 3.0, ny*0.5))*0.6);
-
-        // color per-band (hue choices; map band index to a palette)
-        float baseHue = 0.0;
-        if (b == 0) baseHue = 0.48; // greenish
-        if (b == 1) baseHue = 0.78; // purple-blue
-        if (b == 2) baseHue = 0.12; // golden
-        if (b == 3) baseHue = 0.58; // cyan
-
-        float hue = baseHue + (n * 0.08) + (bandEnergy * 0.06);
-        float sat = 0.6 * u_saturation + 0.2;
-        float val = 0.25 + bandEnergy * 0.85;
-
-        vec3 col = h2rgb(hue, sat, val);
-        // multiply by mask and bandEnergy (so quiet bands are dim)
-        vec3 contribution = col * mask * (0.25 + bandEnergy*1.5);
-
-        // add subtle vertical glow (w wider)
-        float glowMask = exp(-abs(uv.y - center) * 8.0) * 0.5;
-        accum += contribution * (1.0 + glowMask * u_glow);
-      }
-
-      // Stars: low-density hashed dots with slow twinkle
-      float star = 0.0;
-      // bias density with u_starDensity
-      vec2 starCell = floor(uv * u_resolution.xy / 40.0);
-      float h = hash21(starCell * 0.123 + vec2(u_time * 0.02));
-      if (h < u_starDensity) {
-        // twinkle via per-cell sine
-        float tw = 0.5 + 0.5 * sin(hash21(starCell) * 343.2 + u_time * 0.8);
-        float dx = fract(uv.x * u_resolution.x / 40.0) - 0.5;
-        float dy = fract(uv.y * u_resolution.y / 40.0) - 0.5;
-        float d = sqrt(dx*dx + dy*dy);
-        float s = smoothstep(u_starSize * 0.6, 0.0, d) * tw;
-        star += s;
-      }
-
-      // combine sky + aurora + stars (additive)
-      vec3 color = sky + accum;
-      color += vec3(star * 1.2);
-
-      // tone mapping and gamma
-      color = 1.0 - exp(-color * vec3(1.2)); // simple tonemap
-      color = pow(color, vec3(0.95)); // gamma
-
-      gl_FragColor = vec4(color, 1.0);
-    }
-  `;
-
-  // Create shader program
-  const vertexShader = gl.createShader(gl.VERTEX_SHADER);
-  gl.shaderSource(vertexShader, vsSource);
-  gl.compileShader(vertexShader);
-  
-  const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
-  gl.shaderSource(fragmentShader, fsSource);
-  gl.compileShader(fragmentShader);
-  
-  const program = gl.createProgram();
-  gl.attachShader(program, vertexShader);
-  gl.attachShader(program, fragmentShader);
-  gl.linkProgram(program);
-  gl.useProgram(program);
-  
-  // Create a quad that covers the entire screen
-  const buffer = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-  
-  const positionAttributeLocation = gl.getAttribLocation(program, "a_pos");
-  gl.enableVertexAttribArray(positionAttributeLocation);
-  gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
-  
-  // Get uniform locations
-  const resolutionUniformLocation = gl.getUniformLocation(program, "u_resolution");
-  const timeUniformLocation = gl.getUniformLocation(program, "u_time");
-  const bandsUniformLocation = gl.getUniformLocation(program, "u_bands");
-  const speedUniformLocation = gl.getUniformLocation(program, "u_speed");
-  const saturationUniformLocation = gl.getUniformLocation(program, "u_saturation");
-  const starDensityUniformLocation = gl.getUniformLocation(program, "u_starDensity");
-  const starSizeUniformLocation = gl.getUniformLocation(program, "u_starSize");
-  const glowUniformLocation = gl.getUniformLocation(program, "u_glow");
-  
-  // Set default uniform values
-  gl.uniform2f(resolutionUniformLocation, canvas.width, canvas.height);
-  gl.uniform1f(speedUniformLocation, options.speed || 1.0);
-  gl.uniform1f(saturationUniformLocation, options.saturation || 1.0);
-  gl.uniform1f(starDensityUniformLocation, options.starDensity || 0.02);
-  gl.uniform1f(starSizeUniformLocation, options.starSize || 0.2);
-  gl.uniform1f(glowUniformLocation, options.glow || 0.5);
-  
-  let startTime = Date.now();
-  
-  // Return render function
-  return function render() {
-    dprSizeCanvas();
-    
-    // Update canvas size if needed
-    if (canvas.width !== gl.canvas.width || canvas.height !== gl.canvas.height) {
-      gl.viewport(0, 0, canvas.width, canvas.height);
-      gl.uniform2f(resolutionUniformLocation, canvas.width, canvas.height);
-    }
-    
-    // Update time
-    const currentTime = (Date.now() - startTime) / 1000;
-    gl.uniform1f(timeUniformLocation, currentTime);
-    
-    // Update bands
-    if (getBandEnergies) {
-      const bands = getBandEnergies();
-      gl.uniform4f(bandsUniformLocation, bands[0], bands[1], bands[2], bands[3]);
-    }
-    
-    // Render
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-  };
-}
 
 function createBandEnergiesGetter(analyser, dataArray) {
   return function() {
@@ -1092,13 +1040,17 @@ function createBandEnergiesGetter(analyser, dataArray) {
   };
 }
 
+
+
+
 // ----- Animation loop -----
 function animate() {
   if (!isAudioPlaying) return;
-  
+
+  // Use the style's own audio analysis (so no undefined vars)
   animationId = requestAnimationFrame(animate);
-  
-  switch(currentStyle) {
+
+  switch (currentStyle) {
     case "florr":
       renderFlorr();
       break;
@@ -1189,10 +1141,8 @@ stopBtn.addEventListener("click", () => {
     cancelAnimationFrame(animationId);
     animationId = null;
   }
-  
-  // Clear canvas when stopped
-  clearCanvas();
 });
+
 
 // Style selection buttons
 document.querySelectorAll(".styleBtn").forEach(btn => {
@@ -1210,27 +1160,20 @@ document.querySelectorAll(".styleBtn").forEach(btn => {
     // Change current style
     currentStyle = style;
     
-    // Reset particles for styles that use them
-    if (style === "star" || style === "quantum") {
-      particles = [];
-    }
-    
-     // Handle WebGL canvas visibility
-    const glCanvas = document.getElementById("webgl-canvas");
-    if (glCanvas) {
-      if (style === "aurora") {
-        glCanvas.style.display = "block";
-      } else {
-        glCanvas.style.display = "none";
+    // Initialize Starry Night particles when switching to that style
+    if (style === "star") {
+      if (bandParticles.length === 0) { // Initialize only once
+        initStarryNightParticles();
       }
     }
     
-    // Reinitialize WebGL for Aurora if needed
-    if (style === "aurora") {
-      auroraGL = null;
+    // Reset particles for other styles that use them
+    if (style === "quantum") {
+      particles = [];
     }
   });
 });
+
 
 // In your app.js, replace the setupProgressBarDragging function with this:
 // In your app.js, replace the setupProgressBarDragging function with this:
