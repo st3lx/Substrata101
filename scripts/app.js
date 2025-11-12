@@ -1014,11 +1014,165 @@ const indigoPalette = [
   }
 
   // 14. Rain style (placeholder)
-  function renderRain() {
-    dprSizeCanvas();
-    clearCanvas();
-    // Add your Rain style implementation here
+function renderRain() {
+  dprSizeCanvas();
+  clearCanvas();
+  if (!ctx2d || !analyser || !dataArray) {
+    console.log('Missing required components:', { ctx2d: !!ctx2d, analyser: !!analyser, dataArray: !!dataArray });
+    return;
   }
+
+  analyser.getByteFrequencyData(dataArray);
+
+  const cw = canvas.width;
+  const ch = canvas.height;
+  const time = performance.now() * 0.001;
+
+  // --- AUDIO ANALYSIS ---
+  const avgAmp = dataArray.reduce((a, b) => a + b, 0) / dataArray.length / 255;
+  console.log('Audio avgAmp:', avgAmp); // Debug log
+
+  const nBands = 12;
+  const bandSize = Math.floor(dataArray.length / nBands);
+  const bandAmps = new Array(nBands).fill(0);
+  for (let i = 0; i < nBands; i++) {
+    let sum = 0;
+    for (let j = 0; j < bandSize; j++) sum += dataArray[i * bandSize + j];
+    bandAmps[i] = sum / bandSize / 255;
+  }
+
+  // --- RIPPLE SYSTEM STATE ---
+  if (!renderRain.ripples) {
+    renderRain.ripples = [];
+    console.log('Initialized ripples array');
+  }
+
+  const ripples = renderRain.ripples;
+
+  // Volume threshold to create new ripples - make it more sensitive
+  const trigger = 0.05; // Lower threshold
+
+  // Add new ripples - make it more generous for testing
+  for (let i = 0; i < nBands; i++) {
+    const intensity = bandAmps[i];
+    
+    // More sensitive triggering for testing
+    if (intensity > trigger || Math.random() < 0.1) { // Always some random ripples
+      const hue = 200 + Math.random() * 60; // Blue range
+      const saturation = 40 + Math.random() * 40;
+      
+      const cx = cw * Math.random();
+      const cy = ch * (0.3 + 0.6 * Math.random()); // More central
+
+      ripples.push({
+        x: cx,
+        y: cy,
+        radius: 5 + Math.random() * 10, // Start with small radius
+        maxR: 50 + Math.random() * 150, // Reasonable max size
+        hue: hue,
+        saturation: saturation,
+        life: 1.0,
+        brightness: 60 + Math.random() * 40,
+        waveCount: 2 + Math.floor(Math.random() * 3), // 2-4 waves
+        waveSpacing: 20 + Math.random() * 10,
+        creationTime: time
+      });
+      
+      console.log('Created new ripple at:', cx, cy); // Debug log
+    }
+  }
+
+  // If no audio, create some test ripples
+  if (ripples.length === 0 && avgAmp < 0.01) {
+    for (let i = 0; i < 3; i++) {
+      ripples.push({
+        x: cw * (0.2 + 0.6 * Math.random()),
+        y: ch * (0.3 + 0.4 * Math.random()),
+        radius: 10,
+        maxR: 80 + Math.random() * 100,
+        hue: 200 + Math.random() * 70,
+        saturation: 50,
+        life: 1.0,
+        brightness: 60,
+        waveCount: 3,
+        waveSpacing: 12,
+        creationTime: time
+      });
+    }
+    console.log('Created test ripples');
+  }
+
+  // --- DRAW RIPPLE INTERFERENCE ---
+  ctx2d.save();
+  ctx2d.globalCompositeOperation = "lighter";
+
+  // Draw water background first
+  ctx2d.fillStyle = 'hsla(210, 40%, 15%, 0.8)';
+  ctx2d.fillRect(0, 0, cw, ch);
+
+  ripples.forEach((r, index) => {
+    const age = time - r.creationTime;
+    const phase = r.radius / r.maxR;
+    const alpha = Math.max(0, 0.8 * (1 - phase) * r.life);
+
+    // Draw multiple concentric circles
+    for (let wave = 0; wave < r.waveCount; wave++) {
+      const waveRadius = r.radius - (wave * r.waveSpacing);
+      if (waveRadius < 0) continue;
+      
+      const waveAlpha = alpha * (1 - (wave / r.waveCount));
+      const thickness = 1.2 + 2 * (1 - phase) * (1 - (wave / r.waveCount));
+      
+      const color = `hsla(${r.hue}, ${r.saturation}%, ${r.brightness}%, ${waveAlpha})`;
+
+      ctx2d.beginPath();
+      ctx2d.strokeStyle = color;
+      ctx2d.lineWidth = thickness;
+      ctx2d.arc(r.x, r.y, waveRadius, 0, 2 * Math.PI);
+      ctx2d.stroke();
+    }
+
+    // Update ripple properties
+    r.radius += 2 + avgAmp * 4;
+    r.life -= 0.02;
+
+    console.log(`Ripple ${index}: radius=${r.radius.toFixed(1)}, life=${r.life.toFixed(2)}`); // Debug log
+  });
+
+  // Remove dead ripples
+  const initialLength = ripples.length;
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    if (ripples[i].life <= 0 || ripples[i].radius > ripples[i].maxR) {
+      ripples.splice(i, 1);
+    }
+  }
+  
+  if (ripples.length !== initialLength) {
+    console.log(`Removed ${initialLength - ripples.length} ripples, ${ripples.length} remaining`);
+  }
+
+  ctx2d.restore();
+
+  // Draw some static to show it's working
+  ctx2d.fillStyle = 'rgba(100, 150, 255, 0.1)';
+  ctx2d.fillText(`Rain Mode - Ripples: ${ripples.length}`, 10, 20);
+}
+
+// Force initialization on first call
+let rainInitialized = false;
+const originalRenderRain = renderRain;
+renderRain = function() {
+  if (!rainInitialized) {
+    console.log('First call to renderRain - initializing');
+    rainInitialized = true;
+    renderRain.ripples = [];
+  }
+  return originalRenderRain.apply(this, arguments);
+};
+
+
+
+
 
 function createBandEnergiesGetter(analyser, dataArray) {
   return function() {
