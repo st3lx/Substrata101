@@ -1295,10 +1295,311 @@ const indigoPalette = [
   }
 
   // 7. Galaxy style
-  function renderGalaxy() {
+  // =============== GALAXY STATE =============== //
+const galaxy = {
+    stars: [],
+    nebulaPoints: [],
+    armCount: 4,
+    starCount: 8000,
+    nebulaCount: 1500,
+    baseRotation: 0,
+};
+
+// Call once at init:
+function initGalaxy() {
+    // Generate spiral-arm stars
+    for (let i = 0; i < galaxy.starCount; i++) {
+        const arm = Math.floor(Math.random() * galaxy.armCount);
+
+        // radial distance
+        const r = Math.pow(Math.random(), 0.55) * 500;
+
+        // base angle for spiral arm (θ = base + k*r)
+        const angle = arm * (Math.PI * 2 / galaxy.armCount)
+                    + r * 0.045
+                    + (Math.random() - 0.5) * 0.25; // small scatter
+
+        // branching noise
+        const branchOffset = (Math.random() - 0.5) * r * 0.03;
+
+        galaxy.stars.push({
+            r,
+            angle,
+            branchOffset,
+            size: Math.random() * 1.3 + 0.3,
+            baseBrightness: Math.random() * 0.7 + 0.3,
+        });
+    }
+
+    // Nebula cloud points (blurred fog)
+    for (let i = 0; i < galaxy.nebulaCount; i++) {
+        const r = Math.pow(Math.random(), 0.8) * 450;
+        const angle = Math.random() * Math.PI * 2;
+        galaxy.nebulaPoints.push({
+            x: r * Math.cos(angle),
+            y: r * Math.sin(angle),
+            alpha: Math.random() * 0.35 + 0.1,
+            size: Math.random() * 50 + 30
+        });
+    }
+}
+
+// Utility: pitch = centroid from FFT
+function getPitch(audioData) {
+    let sum = 0, weight = 0;
+    for (let i = 0; i < audioData.length; i++) {
+        sum += i * audioData[i];
+        weight += audioData[i];
+    }
+    return weight === 0 ? 0 : sum / weight;
+}
+
+// Utility: volume = average amplitude
+function getVolume(audioData) {
+    let sum = 0;
+    for (let v of audioData) sum += v;
+    return sum / audioData.length;
+}
+
+
+// 7. Galaxy style - Fixed
+function renderGalaxy() {
+  dprSizeCanvas();
+  clearCanvas();
+  if (!ctx2d || !analyser || !dataArray) return;
+
+  // Get audio data for responsiveness
+  analyser.getByteFrequencyData(dataArray);
+  
+  // Calculate audio energy
+  let audioEnergy = 0;
+  for (let i = 0; i < dataArray.length; i++) {
+    audioEnergy += dataArray[i] / 255;
+  }
+  audioEnergy = audioEnergy / dataArray.length;
+  
+  // Calculate beat from low frequencies
+  let beatIntensity = 0;
+  const lowEnd = Math.floor(dataArray.length * 0.3);
+  for (let i = 0; i < lowEnd; i++) {
+    beatIntensity += dataArray[i] / 255;
+  }
+  beatIntensity /= lowEnd;
+
+  const cw = canvas.width;
+  const ch = canvas.height;
+  const cx = cw / 2;
+  const cy = ch / 2;
+  
+  // Initialize galaxy state if needed
+  if (!renderGalaxy.initialized) {
+    renderGalaxy.initialized = true;
+    renderGalaxy.stars = [];
+    renderGalaxy.nebulaPoints = [];
+    renderGalaxy.baseRotation = 0;
+    renderGalaxy.time = 0;
     
+    // Generate spiral-arm stars
+    const armCount = 4;
+    const starCount = 3000;
+    
+    for (let i = 0; i < starCount; i++) {
+      const arm = Math.floor(Math.random() * armCount);
+      const r = Math.pow(Math.random(), 0.6) * Math.min(cw, ch) * 0.4;
+      const angle = arm * (Math.PI * 2 / armCount) + r * 0.05 + (Math.random() - 0.5) * 0.3;
+      
+      renderGalaxy.stars.push({
+        r,
+        angle,
+        size: Math.random() * 1.5 + 0.5,
+        brightness: Math.random() * 0.7 + 0.3,
+        speed: 0.5 + Math.random() * 0.5
+      });
+    }
+    
+    // Generate nebula points
+    for (let i = 0; i < 500; i++) {
+      const r = Math.pow(Math.random(), 0.8) * Math.min(cw, ch) * 0.35;
+      const angle = Math.random() * Math.PI * 2;
+      
+      renderGalaxy.nebulaPoints.push({
+        x: r * Math.cos(angle),
+        y: r * Math.sin(angle),
+        alpha: Math.random() * 0.25 + 0.1,
+        size: Math.random() * 40 + 20
+      });
+    }
   }
 
+  // Update time and rotation
+  renderGalaxy.time += 0.016 * (1 + audioEnergy * 0.5);
+  renderGalaxy.baseRotation += 0.0003 * (1 + beatIntensity * 0.8);
+
+  // Draw dark space background
+  ctx2d.fillStyle = '#000015';
+  ctx2d.fillRect(0, 0, cw, ch);
+
+  // Save and translate to center
+  ctx2d.save();
+  ctx2d.translate(cx, cy);
+
+  // Draw nebula (fog layer)
+  const nebulaBrightness = 1 + audioEnergy * 0.5;
+  for (let p of renderGalaxy.nebulaPoints) {
+    // Rotate with galaxy
+    const rotX = p.x * Math.cos(renderGalaxy.baseRotation) - p.y * Math.sin(renderGalaxy.baseRotation);
+    const rotY = p.x * Math.sin(renderGalaxy.baseRotation) + p.y * Math.cos(renderGalaxy.baseRotation);
+    
+    // Pulsate with audio
+    const pulse = 1 + Math.sin(renderGalaxy.time * p.size * 0.001) * 0.3;
+    const alpha = p.alpha * nebulaBrightness * (0.5 + audioEnergy * 0.5);
+    
+    // Blue-purple nebula
+    ctx2d.fillStyle = `rgba(100, 120, 220, ${alpha})`;
+    ctx2d.beginPath();
+    ctx2d.ellipse(rotX, rotY, p.size * pulse, p.size * 0.6 * pulse, 0, 0, Math.PI * 2);
+    ctx2d.fill();
+    
+    // Pink nebula highlights
+    if (Math.random() < 0.3) {
+      ctx2d.fillStyle = `rgba(200, 120, 220, ${alpha * 0.6})`;
+      ctx2d.beginPath();
+      ctx2d.ellipse(rotX * 1.1, rotY * 0.9, p.size * 0.5 * pulse, p.size * 0.3 * pulse, 0, 0, Math.PI * 2);
+      ctx2d.fill();
+    }
+  }
+
+  // Draw stars
+  const starBrightness = 1 + audioEnergy * 0.8;
+  for (let s of renderGalaxy.stars) {
+    // Calculate position with rotation and individual motion
+    const angle = s.angle + renderGalaxy.baseRotation * s.speed;
+    const x = s.r * Math.cos(angle);
+    const y = s.r * Math.sin(angle);
+    
+    // Star flicker and audio response
+    const flicker = 1 + 0.4 * Math.sin(renderGalaxy.time * 3 + s.r * 0.01);
+    const brightness = Math.min(1, s.brightness * starBrightness * flicker);
+    
+    // Color based on distance from center
+    const hue = 200 + (s.r / (Math.min(cw, ch) * 0.4)) * 40;
+    const saturation = 60 + (s.r / (Math.min(cw, ch) * 0.4)) * 40;
+    
+    // Draw star
+    ctx2d.fillStyle = `hsla(${hue}, ${saturation}%, ${brightness * 90}%, ${brightness})`;
+    ctx2d.beginPath();
+    ctx2d.arc(x, y, s.size * (1 + beatIntensity * 0.5), 0, Math.PI * 2);
+    ctx2d.fill();
+    
+    // Add glow to brighter stars
+    if (brightness > 0.7) {
+      ctx2d.save();
+      ctx2d.globalCompositeOperation = 'lighter';
+      const glowSize = s.size * 2 * (1 + beatIntensity);
+      const gradient = ctx2d.createRadialGradient(x, y, 0, x, y, glowSize);
+      gradient.addColorStop(0, `rgba(255, 255, 255, ${brightness * 0.5})`);
+      gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      
+      ctx2d.fillStyle = gradient;
+      ctx2d.beginPath();
+      ctx2d.arc(x, y, glowSize, 0, Math.PI * 2);
+      ctx2d.fill();
+      ctx2d.restore();
+    }
+  }
+
+  // Draw galactic core (bright center)
+  const corePulse = 1 + beatIntensity * 0.7;
+  const coreGradient = ctx2d.createRadialGradient(0, 0, 0, 0, 0, 50 * corePulse);
+  coreGradient.addColorStop(0, `rgba(255, 220, 180, ${0.8 + audioEnergy * 0.4})`);
+  coreGradient.addColorStop(0.7, `rgba(200, 150, 255, ${0.3 + audioEnergy * 0.3})`);
+  coreGradient.addColorStop(1, 'rgba(100, 50, 200, 0)');
+  
+  ctx2d.save();
+  ctx2d.globalCompositeOperation = 'lighter';
+  ctx2d.fillStyle = coreGradient;
+  ctx2d.beginPath();
+  ctx2d.arc(0, 0, 50 * corePulse, 0, Math.PI * 2);
+  ctx2d.fill();
+  
+  // Add smaller white core
+  ctx2d.fillStyle = `rgba(255, 255, 255, ${0.6 + audioEnergy * 0.3})`;
+  ctx2d.beginPath();
+  ctx2d.arc(0, 0, 15 * corePulse, 0, Math.PI * 2);
+  ctx2d.fill();
+  ctx2d.restore();
+
+  // Draw spiral arm guides (subtle)
+  ctx2d.strokeStyle = `rgba(100, 150, 255, ${0.05 + audioEnergy * 0.1})`;
+  ctx2d.lineWidth = 1;
+  
+  for (let arm = 0; arm < 4; arm++) {
+    ctx2d.beginPath();
+    for (let r = 20; r < Math.min(cw, ch) * 0.4; r += 5) {
+      const angle = arm * (Math.PI * 2 / 4) + r * 0.05 + renderGalaxy.baseRotation;
+      const x = r * Math.cos(angle);
+      const y = r * Math.sin(angle);
+      
+      if (r === 20) ctx2d.moveTo(x, y);
+      else ctx2d.lineTo(x, y);
+    }
+    ctx2d.stroke();
+  }
+
+  // Add shooting stars occasionally
+  if (!renderGalaxy.lastShootingStar || performance.now() - renderGalaxy.lastShootingStar > 2000) {
+    if (Math.random() < 0.02 + audioEnergy * 0.1) {
+      renderGalaxy.shootingStar = {
+        x: -cw * 0.4,
+        y: (Math.random() - 0.5) * ch * 0.4,
+        length: 50 + Math.random() * 100,
+        speed: 3 + Math.random() * 4,
+        life: 100
+      };
+      renderGalaxy.lastShootingStar = performance.now();
+    }
+  }
+
+  // Draw shooting star if exists
+  if (renderGalaxy.shootingStar && renderGalaxy.shootingStar.life > 0) {
+    const ss = renderGalaxy.shootingStar;
+    const angle = Math.atan2(ss.y, ss.x);
+    
+    // Draw trail
+    const trailGradient = ctx2d.createLinearGradient(
+      ss.x, ss.y,
+      ss.x - Math.cos(angle) * ss.length,
+      ss.y - Math.sin(angle) * ss.length
+    );
+    trailGradient.addColorStop(0, 'rgba(255, 255, 255, 0.8)');
+    trailGradient.addColorStop(0.5, 'rgba(200, 200, 255, 0.4)');
+    trailGradient.addColorStop(1, 'rgba(150, 150, 255, 0)');
+    
+    ctx2d.save();
+    ctx2d.globalCompositeOperation = 'lighter';
+    ctx2d.strokeStyle = trailGradient;
+    ctx2d.lineWidth = 3;
+    ctx2d.lineCap = 'round';
+    ctx2d.beginPath();
+    ctx2d.moveTo(ss.x, ss.y);
+    ctx2d.lineTo(ss.x - Math.cos(angle) * ss.length, ss.y - Math.sin(angle) * ss.length);
+    ctx2d.stroke();
+    ctx2d.restore();
+    
+    // Update position
+    ss.x += Math.cos(angle) * ss.speed;
+    ss.y += Math.sin(angle) * ss.speed;
+    ss.life--;
+    
+    // Reset if out of bounds
+    if (ss.x > cw * 0.5 || ss.x < -cw * 0.5 || ss.y > ch * 0.5 || ss.y < -ch * 0.5) {
+      ss.life = 0;
+    }
+  }
+
+  // Restore canvas state
+  ctx2d.restore();
+}
   // 8. Quantum style
   function renderQuantum() {
   dprSizeCanvas();
@@ -1702,6 +2003,7 @@ function animate() {
       renderMask();
       break;
     case "galaxy":
+      initGalaxy(); // Ensure initialization
       renderGalaxy();
       break;
     case "quantum":
