@@ -358,10 +358,346 @@ function renderAurora() {
   
 }
 
-  // 4. Storm style
-  function renderStorm() {
+// 4. Storm style
+function renderStorm() {
+  dprSizeCanvas();
+  clearCanvas();
+  if (!ctx2d || !analyser || !dataArray) return;
+
+  // Get audio data for lightning triggering
+  analyser.getByteFrequencyData(dataArray);
+  
+  // Calculate volume/energy for lightning triggering
+  let sum = 0;
+  for (let i = 0; i < dataArray.length; i++) {
+    sum += dataArray[i] / 255;
+  }
+  const audioEnergy = sum / dataArray.length;
+  
+  // Calculate beat intensity for lightning size
+  let lowSum = 0;
+  const lowEnd = Math.floor(dataArray.length * 0.2);
+  for (let i = 0; i < lowEnd; i++) {
+    lowSum += dataArray[i] / 255;
+  }
+  const beatIntensity = lowSum / lowEnd;
+
+  const cw = canvas.width;
+  const ch = canvas.height;
+  const DPR = window.devicePixelRatio || 1;
+
+  // Initialize storm state if needed
+  if (!renderStorm.initialized) {
+    renderStorm.initialized = true;
+    renderStorm.flashes = [];
+    renderStorm.cloudRotation = 0;
+    renderStorm.rainDrops = [];
+    renderStorm.cloudTexture = new Image();
+    renderStorm.cloudTexture.crossOrigin = "anonymous";
+    renderStorm.cloudTexture.src = "https://cdn.pixabay.com/photo/2024/05/10/10/29/atmosphere-8752835_1280.png";
+    renderStorm.cloudLoaded = false;
     
+    renderStorm.cloudTexture.onload = function() {
+      renderStorm.cloudLoaded = true;
+    };
+    
+    // Initialize rain drops (from HTML)
+    renderStorm.rainDrops = new Array(220).fill(0).map(() => ({
+      x: Math.random() * cw,
+      y: Math.random() * -ch,
+      v: (0.9 + Math.random() * 0.9) * DPR,
+      l: (18 + Math.random() * 28) * DPR,
+      a: 0.05 + Math.random() * 0.07
+    }));
+
+    // Lightning parameters from HTML
+    renderStorm.intensity = 1.0;
+    renderStorm.branchChance = 0.22;
+    renderStorm.jaggedness = 0.35;
+  }
+
+  // Draw dark stormy background (from HTML)
+  const grad = ctx2d.createLinearGradient(0, 0, 0, ch);
+  grad.addColorStop(0, '#0b0f1a');
+  grad.addColorStop(1, '#0a0d16');
+  ctx2d.fillStyle = grad;
+  ctx2d.fillRect(0, 0, cw, ch);
+
+  // Draw rotating cloud background
+  if (renderStorm.cloudLoaded) {
+    ctx2d.save();
+    ctx2d.translate(cw/2, ch/2);
+    renderStorm.cloudRotation -= 0.0005;
+    ctx2d.rotate(renderStorm.cloudRotation);
+    ctx2d.globalAlpha = 0.34;
+    ctx2d.drawImage(renderStorm.cloudTexture, -cw*0.85, -ch*0.9, cw*1.4, ch*1.6);
+    ctx2d.globalAlpha = 1.0;
+    ctx2d.restore();
+  }
+
+  // Draw rain (from HTML)
+  ctx2d.save();
+  ctx2d.strokeStyle = 'rgba(160, 175, 200, 0.08)';
+  ctx2d.lineWidth = DPR;
+  ctx2d.beginPath();
+  renderStorm.rainDrops.forEach(d => {
+    ctx2d.moveTo(d.x, d.y);
+    ctx2d.lineTo(d.x, d.y + d.l);
+    d.y += d.v * 14;
+    d.x += 0.2 * DPR;
+    if (d.y > ch) { 
+      d.y = Math.random() * -ch * 0.4; 
+      d.x = Math.random() * cw; 
     }
+  });
+  ctx2d.stroke();
+  ctx2d.restore();
+
+// Audio-responsive lightning triggering - FIXED VERSION
+if (!renderStorm.lastEnergy) renderStorm.lastEnergy = 0;
+
+// Calculate frequency bands for better responsiveness
+analyser.getByteFrequencyData(dataArray);
+const bassBands = dataArray.slice(0, Math.floor(bufferLength * 0.1)); // First 10%
+const midBands = dataArray.slice(Math.floor(bufferLength * 0.1), Math.floor(bufferLength * 0.5)); // 10-50%
+const highBands = dataArray.slice(Math.floor(bufferLength * 0.5)); // 50-100%
+
+const bassEnergy = bassBands.reduce((a, b) => a + b, 0) / (bassBands.length * 255);
+const midEnergy = midBands.reduce((a, b) => a + b, 0) / (midBands.length * 255);
+const highEnergy = highBands.reduce((a, b) => a + b, 0) / (highBands.length * 255);
+
+// Multiple trigger conditions for better audio response:
+
+// 1. Bass drops = big lightning
+if (bassEnergy > 0.55 && Math.random() > 0.9) {
+    const intensity = 0.6 + bassEnergy * 0.8;
+    renderStorm.flashes.push(makeBolt(cw, ch, DPR, intensity));
+}
+
+// 2. Volume spikes = quick lightning
+const volumeSpike = audioEnergy > renderStorm.lastEnergy * 1.8;
+if (volumeSpike && audioEnergy > 0.65) {
+    const intensity = 0.4 + audioEnergy * 0.6;
+    renderStorm.flashes.push(makeBolt(cw, ch, DPR, intensity));
+}
+
+// 3. General loudness = occasional lightning
+if (audioEnergy > 0.6 && Math.random() > 0.9) {
+    renderStorm.flashes.push(makeBolt(cw, ch, DPR, 0.5 + audioEnergy * 0.5));
+}
+
+// 4. High frequency bursts = small lightning
+if (highEnergy > 0.8 && Math.random() > 0.8) {
+    renderStorm.flashes.push(makeBolt(cw, ch, DPR, 0.3 + highEnergy * 0.4));
+}
+
+renderStorm.lastEnergy = audioEnergy;
+
+  // Random lightning strikes (from HTML timing)
+  if (Math.random() < 0.005) {
+    const count = Math.floor(1 + Math.random() );
+    for (let i = 0; i < count; i++) {
+      setTimeout(() => {
+        renderStorm.flashes.push(makeBolt(cw, ch, DPR, 0.7 + Math.random() * 0.4));
+      }, Math.random() * 160);
+    }
+  }
+
+  // Update and draw lightning flashes (from HTML animation)
+  ctx2d.save();
+  renderStorm.flashes = renderStorm.flashes.filter(b => b.age < b.life);
+  renderStorm.flashes.forEach(b => {
+    b.age += 5;
+    drawBolt(ctx2d, b, cw, ch, DPR);
+  });
+  ctx2d.restore();
+}
+
+// Add this function near your other utility functions
+function getLightningColor(intensity, fade, isBranch = false) {
+    // Purple to white gradient based on intensity and fade
+    const t = Math.random() * intensity; // 0 → purple, 1 → white
+    
+    if (isBranch) {
+        // Branches are more purple
+        const r = Math.floor(180 + t * 75); // 180-255
+        const g = Math.floor(120 + t * 135); // 120-255
+        const b = Math.floor(255); // Always max blue for purple
+        return `rgba(${r},${g},${b},${fade})`;
+    } else {
+        // Main bolt can vary more
+        const r = Math.floor(153 + t * 102); // 153-255
+        const g = Math.floor(102 + t * 153); // 102-255
+        const b = Math.floor(255); // Always max blue
+        return `rgba(${r},${g},${b},${fade})`;
+    }
+}
+// Lightning functions from HTML
+function makeBolt(cw, ch, DPR, intensity = 1.0) {
+    // Extreme position variation
+    const startX = (cw * 0.1) + Math.random() * (cw * 0.8); // Wider horizontal range
+    const endX = startX + (Math.random() - 0.5) * (cw * 0.3); // More horizontal spread
+    
+    // Very wide vertical range - some very short, some screen-spanning
+    const startY = ch * (0.005 + Math.random() * 0.15); // 0.5%-15.5% from top
+    const endY = ch * (0.3 + Math.random() * 0.68); // 30%-98% from top
+    
+    // Extreme step variation - very short to very long bolts
+    let steps;
+    const lengthRand = Math.random();
+    if (lengthRand < 0.3) {
+        steps = Math.floor(4 + Math.random() * 6); // 4-9 steps (very short)
+    } else if (lengthRand < 0.7) {
+        steps = Math.floor(10 + Math.random() * 15); // 10-24 steps (medium)
+    } else if (lengthRand < 0.9) {
+        steps = Math.floor(25 + Math.random() * 15); // 25-39 steps (long)
+    } else {
+        steps = Math.floor(40 + Math.random() * 20); // 40-59 steps (very long)
+    }
+
+    // Noise function from HTML
+    const seed = Math.random() * 1e6;
+    let x = seed, y = seed * 1.618;
+    const n = t => {
+        x += 0.01; y += 0.013;
+        const s = Math.sin(x) + Math.sin(y * 0.7) * 0.5;
+        return s * 0.5 + 0.5;
+    };
+
+    const segments = [];
+    const jaggedness = 0.2*renderStorm.jaggedness;
+    
+    // Adjust jaggedness based on length - longer bolts can be more jagged
+    const lengthAdjustedJaggedness = jaggedness * (0.5 + (steps / 60));
+
+    // Build main path (from HTML)
+    for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const xPos = startX + (endX - startX) * t;
+        const yPos = startY + (endY - startY) * t;
+
+        const bend = (Math.sin(t * Math.PI * 1.2) * (Math.random() - 0.5) * 60) * DPR;
+        const jitterX = (n(t * 7) - 0.5) * 100 * lengthAdjustedJaggedness * DPR;
+        const jitterY = (n(t * 9) - 0.5) * 60 * lengthAdjustedJaggedness * DPR;
+        
+        segments.push({ 
+            x: xPos + bend + jitterX, 
+            y: yPos + jitterY 
+        });
+    }
+
+    const branches = [];
+
+    // Recursive branch generator - more branches on longer bolts
+    function makeBranch(origin, depth = 0) {
+        const baseLen = 3 + Math.random() * 8;
+        const len = Math.floor(baseLen * (0.4 + (steps / 40))); // Scale with main bolt length
+        
+        const angle = (Math.PI * 0.3) + Math.random() * (Math.PI * 0.7);
+        const segs = [origin];
+        let bx = origin.x, by = origin.y;
+
+        for (let k = 0; k < len; k++) {
+            bx += Math.cos(angle + (Math.random() - 0.5) * 0.6) * (15 + Math.random() * 20) * DPR;
+            by += Math.sin(angle + (Math.random() - 0.5) * 0.4) * (15 + Math.random() * 20) * DPR;
+            segs.push({ x: bx, y: by });
+
+            if (depth < 1.8 && Math.random() < 0.15) {
+                branches.push(makeBranch({ x: bx, y: by }, depth + 1));
+            }
+        }
+        return segs;
+    }
+
+    // Branch chance scales with bolt length
+    const baseBranchChance = renderStorm.branchChance;
+    const lengthBasedBranchChance = baseBranchChance * (0.3 + (steps / 30));
+
+    // Spawn branches from main path
+    for (let i = 3; i < segments.length - 3; i++) {
+        if (Math.random() < lengthBasedBranchChance * (1 - i / segments.length)) {
+            branches.push(makeBranch(segments[i], 0));
+        }
+    }
+
+    return {
+        main: segments,
+        branches,
+        age: 0,
+        life: 60 + (steps * 2) + Math.random() * 40, // Longer bolts live longer
+        intensity: intensity * (0.6 + (steps / 50)) // Longer bolts more intense
+    };
+}
+
+function drawBolt(ctx, bolt, cw, ch, DPR) {
+    const age = bolt.age;
+    const life = bolt.life;
+    const fade = 1 - Math.min(1, age / life);
+
+    // Global flash with purple tint
+    ctx.fillStyle = `rgba(200, 180, 255, ${0.04 * bolt.intensity * fade})`;
+    ctx.fillRect(0, 0, cw, ch);
+
+    // Lightning drawing
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+
+    // MAIN BOLT - THICKER
+    // Outer glow (thickest)
+    ctx.lineWidth = 4.8 * DPR * bolt.intensity; // Thicker based on intensity
+    ctx.strokeStyle = getLightningColor(bolt.intensity, 0.4 * fade, false);
+    ctx.shadowBlur = 30 * DPR * bolt.intensity;
+    ctx.shadowColor = 'rgba(169, 120, 255, 0.7)'; // More purple shadow
+    drawLightningPath(ctx, bolt.main);
+
+    // Main bolt middle layer
+    ctx.lineWidth = 3.6 * DPR * bolt.intensity;
+    ctx.strokeStyle = getLightningColor(bolt.intensity, 0.7 * fade, false);
+    ctx.shadowBlur = 15 * DPR;
+    ctx.shadowColor = 'rgba(200, 160, 255, 0.8)';
+    drawLightningPath(ctx, bolt.main);
+
+    // Main bolt inner core (brightest)
+    ctx.lineWidth = 2.2 * DPR * bolt.intensity;
+    ctx.strokeStyle = getLightningColor(bolt.intensity, 0.9 * fade, false);
+    ctx.shadowBlur = 8 * DPR;
+    ctx.shadowColor = 'rgba(220, 200, 255, 0.9)';
+    drawLightningPath(ctx, bolt.main);
+
+    // BRANCHES - THINNER
+    bolt.branches.forEach(branch => {
+        // Branch outer glow (thinner than main bolt)
+        ctx.lineWidth = 3.4 * DPR * bolt.intensity * 0.8; 
+        ctx.strokeStyle = getLightningColor(bolt.intensity, 0.5 * fade, true);
+        ctx.shadowBlur = 20 * DPR * bolt.intensity * 0.7;
+        ctx.shadowColor = 'rgba(150, 100, 255, 0.6)';
+        drawLightningPath(ctx, branch);
+
+        // Branch inner core (thinner)
+        ctx.lineWidth = 2.0 * DPR * bolt.intensity * 0.8;
+        ctx.strokeStyle = getLightningColor(bolt.intensity, 0.5 * fade, true);
+        ctx.shadowBlur = 6 * DPR;
+        ctx.shadowColor = 'rgba(180, 140, 255, 0.8)';
+        drawLightningPath(ctx, branch);
+    });
+
+    ctx.restore();
+}
+
+function drawLightningPath(ctx, points) {
+  if (points.length < 2) return;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(points[i].x, points[i].y);
+  }
+  ctx.stroke();
+}
+
+// Linear interpolation helper
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
   
   // Bezier curve control points
 const P0 = [0.00, 0.82];
@@ -965,10 +1301,155 @@ const indigoPalette = [
 
   // 8. Quantum style
   function renderQuantum() {
-    dprSizeCanvas();
-    clearCanvas();
-    
+  dprSizeCanvas();
+  clearCanvas();
+  if (!ctx2d) return;
+
+  const cw = canvas.width;
+  const ch = canvas.height;
+  const cx = cw / 2;
+  const cy = ch / 2;
+
+  // ---------------------------
+  // Audio → beat / energy input
+  // ---------------------------
+  let audioEnergy = 0;
+  let beat = 0;
+  if (analyser && dataArray) {
+    analyser.getByteFrequencyData(dataArray);
+    let sum = 0, lowSum = 0;
+    const lowEnd = Math.floor(dataArray.length * 0.18);
+    for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+    for (let i = 0; i < lowEnd; i++) lowSum += dataArray[i];
+
+    audioEnergy = (sum / dataArray.length) / 255;  
+    beat = (lowSum / lowEnd) / 255;                
   }
+
+  // ---------------------------------------------
+  // 1D Gaussian Wavepacket Schrödinger Evolution
+  // ---------------------------------------------
+  // ψ(x, t) = A * exp( - (x - x0 - v t)^2 / (4 σ(t)^2) ) * exp( i(k0 (x - x0 - v t) - ω t) )
+  //
+  // σ(t) = σ0 √(1 + (t / t0)^2)     (free-particle dispersion)
+  // We map: 
+  //    - audioEnergy → widen σ
+  //    - beat → "kick" momentum k0 and brighten phase
+
+  // persistent state for continuous evolution
+  if (!renderQuantum.state) {
+    renderQuantum.state = {
+      t: 0,
+      x0: 0,
+      σ0: 0.12,
+      k0: 22,
+      ω0: 0.015,
+      particles: []
+    };
+  }
+
+  const S = renderQuantum.state;
+  S.t += 0.016 * (1 + audioEnergy * 0.8);
+  S.k0 += (beat - 0.5) * 0.25;        // beat "kicks" packet
+  const v = S.k0 * 0.012;              // group velocity
+  const xShift = S.x0 + v * S.t;
+
+  const σ = S.σ0 * Math.sqrt(1 + (S.t * 0.6) ** 2) * (1 + audioEnergy * 0.7);
+  const A = 1 / Math.sqrt(σ * Math.sqrt(Math.PI));
+
+  // ---------------------------------------------
+  // Draw probability density |ψ|² along 1D line
+  // ---------------------------------------------
+  const N = 600; // resolution
+  const baseY = cy;
+  ctx2d.lineWidth = 2;
+
+  // envelope fade
+  ctx2d.globalAlpha = 0.9;
+
+  ctx2d.beginPath();
+  for (let i = 0; i <= N; i++) {
+    const xCanvas = (i / N) * cw;
+    const x = (i / N - 0.5) * 6;        // map screen → real coordinate
+
+    const gaussian = Math.exp(-((x - xShift) ** 2) / (4 * σ * σ));
+    const envelope = A * gaussian;
+
+    const intensity = envelope * 240;  // vertical scale
+    const yCanvas = baseY - intensity;
+
+    // shimmer interference (phase)
+    const phase = S.k0 * (x - xShift) - S.ω0 * S.t;
+    const phaseColor = (phase * 50 + audioEnergy * 200) % 360;
+
+    ctx2d.strokeStyle = `hsl(${phaseColor}, 90%, 65%)`;
+
+    if (i === 0) ctx2d.moveTo(xCanvas, yCanvas);
+    else ctx2d.lineTo(xCanvas, yCanvas);
+  }
+  ctx2d.stroke();
+
+  ctx2d.globalAlpha = 1;
+
+  // ---------------------------------------------
+  // Probability Current Trails (quantum flow)
+  // j = Im(ψ* ∂ψ/∂x)
+  // Visualized as drifting particles riding local momentum
+  // ---------------------------------------------
+  if (S.particles.length < 120) {
+    S.particles.push({
+      x: Math.random() * cw,
+      y: cy,
+      life: Math.random() * 80 + 60
+    });
+  }
+
+  S.particles.forEach(p => {
+    // map canvas x → real x
+    const xr = (p.x / cw - 0.5) * 6;
+    const gaussian = Math.exp(-((xr - xShift) ** 2) / (4 * σ * σ));
+    const envelope = A * gaussian;
+
+    // local momentum ~ k0 * envelope
+    const localVelocity = S.k0 * envelope * 0.18;
+
+    p.x += localVelocity * cw * 0.016;
+    p.life--;
+
+    // draw particle
+    const hue = (S.k0 * 12 + audioEnergy * 200) % 360;
+    ctx2d.fillStyle = `hsla(${hue}, 100%, 75%, ${Math.max(p.life / 80, 0)})`;
+    ctx2d.beginPath();
+    ctx2d.arc(p.x, p.y, 3 + envelope * 12, 0, Math.PI * 2);
+    ctx2d.fill();
+  });
+
+  S.particles = S.particles.filter(p => p.life > 0 && p.x >= 0 && p.x <= cw);
+
+  // ---------------------------------------------
+  // Beat “Measurement Sparkles”
+  // ---------------------------------------------
+  if (beat > 0.55) {
+    const count = Math.floor(20 + beat * 40);
+    for (let i = 0; i < count; i++) {
+      const xx = (Math.random() * 0.6 + 0.2); // around packet center
+      const xCanvas = xx * cw;
+      const hue = (S.k0 * 20 + beat * 400) % 360;
+
+      ctx2d.fillStyle = `hsla(${hue}, 100%, 85%, 0.9)`;
+      ctx2d.beginPath();
+      ctx2d.arc(
+        xCanvas,
+        cy - Math.random() * 20,
+        Math.random() * 3 + 1,
+        0,
+        Math.PI * 2
+      );
+      ctx2d.fill();
+    }
+  }
+}
+
 
   // 9. Aqua style
   function renderAqua() {
